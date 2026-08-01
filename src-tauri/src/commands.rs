@@ -5,7 +5,8 @@ use crate::secure_store;
 use crate::state::{AppState, MinerHandle};
 use crate::wallets;
 use darkfi_mobile_ffi::{
-    chacha_decrypt_dm, chacha_encrypt_dm, darkirc_status, generate_darkfi_mnemonic,
+    chacha_decrypt_dm, chacha_encrypt_dm, darkirc_connection_phase, darkirc_status,
+    generate_darkfi_mnemonic,
     generate_dm_keypair, is_arti_running, send_chat_message, start_arti_proxy, start_darkirc,
     stop_arti_proxy, stop_darkirc, validate_darkfi_mnemonic, DarkfiWalletHandle,
     DarkfiWalletNativeError, DarkircEventCallback, DrkBootstrapConfig, ReorgEvent,
@@ -818,7 +819,14 @@ pub fn chat_stop() -> Result<(), String> {
 
 #[tauri::command]
 pub fn chat_status() -> String {
-    darkirc_status()
+    // Prefer fine-grained connect/DAG-sync phase for the chat UI.
+    // Falls back to coarse lifecycle if the phase helper is unavailable.
+    let phase = darkirc_connection_phase();
+    if phase.is_empty() {
+        darkirc_status()
+    } else {
+        phase
+    }
 }
 
 #[tauri::command]

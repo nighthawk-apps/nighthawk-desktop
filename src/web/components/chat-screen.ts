@@ -21,6 +21,80 @@ export class ChatScreen extends LitElement {
   private unlisten?: UnlistenFn;
   private toastTimer?: number;
   private touchTimer?: number;
+  private statusPoll?: number;
+
+  private static phaseLabel(phase: string): string {
+    switch (phase) {
+      case "starting":
+        return "Starting…";
+      case "waiting_for_peers":
+        return "Finding peers…";
+      case "static_sync":
+        return "Static sync…";
+      case "syncing_dag":
+        return "Syncing DAG…";
+      case "loading_history":
+        return "Loading history…";
+      case "connected":
+      case "running":
+        return "Connected";
+      case "stopping":
+        return "Stopping…";
+      case "failed":
+        return "Failed";
+      case "not_running":
+      case "stopped":
+      default:
+        return "Stopped";
+    }
+  }
+
+  private static phaseClass(phase: string): string {
+    switch (phase) {
+      case "connected":
+      case "running":
+        return "ok";
+      case "failed":
+        return "bad";
+      case "stopped":
+      case "not_running":
+        return "";
+      default:
+        return "busy";
+    }
+  }
+
+  private isTerminalPhase(phase: string): boolean {
+    return (
+      phase === "stopped" ||
+      phase === "not_running" ||
+      phase === "connected" ||
+      phase === "failed"
+    );
+  }
+
+  private stopStatusPoll() {
+    if (this.statusPoll) {
+      window.clearInterval(this.statusPoll);
+      this.statusPoll = undefined;
+    }
+  }
+
+  private startStatusPoll() {
+    this.stopStatusPoll();
+    this.statusPoll = window.setInterval(async () => {
+      try {
+        const next = await api.chatStatus();
+        this.status = next;
+        // Keep polling while connected so peer loss / resync updates the label.
+        if (next === "stopped" || next === "not_running" || next === "failed") {
+          this.stopStatusPoll();
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }, 500);
+  }
 
   static styles = css`
     :host {
@@ -98,6 +172,24 @@ export class ChatScreen extends LitElement {
       font-size: var(--font-size-xs);
       color: var(--color-text-muted);
     }
+    .conn-status {
+      margin-left: 4px;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      min-width: 9rem;
+      white-space: nowrap;
+    }
+    .conn-status.busy {
+      color: var(--color-accent-muted, var(--color-accent));
+    }
+    .conn-status.ok {
+      color: #6fbf73;
+      font-weight: 600;
+    }
+    .conn-status.bad {
+      color: var(--color-dangerous);
+      font-weight: 600;
+    }
     .err {
       color: var(--color-dangerous);
       font-size: var(--font-size-sm);
@@ -131,6 +223,13 @@ export class ChatScreen extends LitElement {
   async connectedCallback() {
     super.connectedCallback();
     this.status = await api.chatStatus();
+    if (
+      this.status !== "stopped" &&
+      this.status !== "not_running" &&
+      this.status !== "failed"
+    ) {
+      this.startStatusPoll();
+    }
     try {
       this.dmKeys = await api.dmLoadKeypair();
     } catch {
@@ -169,6 +268,7 @@ export class ChatScreen extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unlisten?.();
+    this.stopStatusPoll();
     if (this.toastTimer) window.clearTimeout(this.toastTimer);
     if (this.touchTimer) window.clearTimeout(this.touchTimer);
   }
@@ -212,17 +312,32 @@ export class ChatScreen extends LitElement {
 
   private async start() {
     this.error = "";
+    this.status = "starting";
+    this.startStatusPoll();
     try {
       await api.chatStart();
       this.status = await api.chatStatus();
+      if (!this.isTerminalPhase(this.status) || this.status === "connected") {
+        this.startStatusPoll();
+      }
     } catch (e: any) {
       this.error = String(e);
+      this.status = await api.chatStatus().catch(() => "failed");
+      this.stopStatusPoll();
     }
   }
 
   private async stop() {
-    await api.chatStop();
-    this.status = await api.chatStatus();
+    this.status = "stopping";
+    this.startStatusPoll();
+    try {
+      await api.chatStop();
+    } finally {
+      this.status = await api.chatStatus().catch(() => "stopped");
+      if (this.status === "stopped" || this.status === "not_running") {
+        this.stopStatusPoll();
+      }
+    }
   }
 
   private async send() {
@@ -386,9 +501,14 @@ export class ChatScreen extends LitElement {
         >
           ${this.channelsList.map((c) => html`<option value=${c}>${c}</option>`)}
         </select>
-        <span class="status">${this.status}</span>
         <button class="primary" @click=${this.start}>Connect</button>
         <button @click=${this.stop}>Stop</button>
+        <span
+          class="conn-status ${ChatScreen.phaseClass(this.status)}"
+          title=${this.status}
+        >
+          ${ChatScreen.phaseLabel(this.status)}
+        </span>
         <label>
           <input
             type="checkbox"
