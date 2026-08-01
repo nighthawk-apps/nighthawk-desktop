@@ -1,0 +1,178 @@
+/* Bundled brand fonts — no remote @import (blocks WKWebView when offline).
+   Source of truth: Android Compose theme (Orbitron display + Share Tech Mono body). */
+@font-face {
+  font-family: "Orbitron";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/orbitron-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Orbitron";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/orbitron-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Share Tech Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/share-tech-mono-400.woff2") format("woff2");
+}
+
+:root {
+  /* Stealth Tokens from Nighthawk Android (StealthTokens / Color.kt) */
+  --color-moonlit: #0E1012;
+  --color-charcoal-deep: #12161B;
+  --color-charcoal-raised: #171C22;
+  --color-elevated: #1F252D;
+  --color-steel-border: #343D47;
+  --color-steel-border-muted: #283038;
+
+  --color-accent: #5E9BAF;
+  --color-accent-pressed: #4F8799;
+  --color-accent-deep: #3F6F80;
+  --color-accent-muted: #7DADB9;
+  --color-on-accent: #081018;
+
+  --color-secondary-fill: #252D36;
+  --color-secondary-fill-highlight: #323B46;
+
+  --color-ink-panel: #15191E;
+  --color-ink-panel-lift: #1E252C;
+
+  --color-text-header: #E8EBEF;
+  --color-text-body: #C4CBD4;
+  --color-text-muted: #8F98A3;
+  --color-navigation-muted: #A8B2BD;
+
+  --color-track-muted: #2F3740;
+  --color-callout-fill: #232A32;
+  --color-callout-on: #B7C0CA;
+  --color-accent-subtle-container: #243038;
+
+  /* Semantic (Android Dark.dangerous / onDangerous) */
+  --color-dangerous: #CF6679;
+  --color-on-dangerous: #1C1B1F;
+  --color-dangerous-banner-bg: #3A2228;
+  --color-dangerous-banner-fg: #F0C8D0;
+  --color-warning: #ffb347; /* desktop-only; no Compose equivalent */
+  --color-overlay: rgba(0, 0, 0, 0.4);
+  --color-highlight: rgba(255, 255, 255, 0.08);
+
+  /* Typography — Android PulpDisplay alias = Orbitron; body = Share Tech Mono */
+  --font-family-display: "Orbitron", system-ui, sans-serif;
+  --font-family-base: "Share Tech Mono", ui-monospace, monospace;
+  --font-size-xs: 0.75rem;   /* 12 */
+  --font-size-sm: 0.875rem;  /* 14 */
+  --font-size-md: 1rem;      /* 16 */
+  --font-size-lg: 1.125rem;  /* 18 */
+  --font-size-xl: 1.3125rem; /* 21 titleLarge */
+  --font-size-2xl: 1.75rem;  /* 28 headlineMedium */
+  --font-size-3xl: 1.875rem; /* 30 headlineLarge */
+
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px; /* Android RoundedCornerShape(8.dp) */
+  --border-radius-lg: 12px;
+  --border-radius-xl: 16px;
+  --border-radius-full: 9999px;
+
+  /* Easing */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-moonlit);
+  color: var(--color-text-body);
+  font-family: var(--font-family-base);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  /* Android Brush.verticalGradient(moonlit → charcoalDeep) */
+  background: linear-gradient(180deg, var(--color-moonlit) 0%, var(--color-charcoal-deep) 100%);
+  background-attachment: fixed;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-text-header);
+  margin-top: 0;
+  font-family: var(--font-family-display);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-accent-muted);
+}
+
+/* Base button styles to be reused in Lit components */
+.btn-primary {
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+  border: none;
+  padding: 12px 24px;
+  border-radius: var(--border-radius-md);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.btn-primary:hover {
+  background-color: var(--color-accent-muted);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  background-color: var(--color-accent-pressed);
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background-color: var(--color-secondary-fill);
+  color: var(--color-text-body);
+  border: 1px solid var(--color-steel-border);
+  padding: 12px 24px;
+  border-radius: var(--border-radius-md);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-secondary-fill-highlight);
+  border-color: var(--color-steel-border-muted);
+}
+
+.glass-panel {
+  background: rgba(31, 37, 45, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(52, 61, 71, 0.4);
+  border-radius: var(--border-radius-xl);
+}

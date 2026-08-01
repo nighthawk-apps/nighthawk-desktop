@@ -1,0 +1,46 @@
+[package]
+name = "nighthawk-app-desktop"
+version = "0.1.0"
+description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
+authors = ["Nighthawk Apps"]
+edition = "2021"
+
+[lib]
+name = "nighthawk_app_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+dirs = "6"
+keyring = { version = "3", features = ["apple-native", "linux-native", "windows-native"] }
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+hmac = "0.12"
+hex = "0.4"
+bs58 = "0.5"
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+blake3 = "1.8"
+argon2 = "0.5"
+
+# Same UniFFI crate as mobile / other clients (sibling of this repo)
+# parent/darkfi-mobile-ffi  ←→  parent/nighthawk-desktop/src-tauri
+darkfi-mobile-ffi = { path = "../../darkfi-mobile-ffi", default-features = true }
+
+[patch.crates-io]
+halo2_proofs = { git = "https://github.com/parazyd/halo2", branch = "v050" }
+halo2_gadgets = { git = "https://github.com/parazyd/halo2", branch = "v050" }
+url = { git = "https://github.com/darkrenaissance/rust-url", branch = "v258" }

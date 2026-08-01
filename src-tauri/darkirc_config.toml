@@ -1,0 +1,14 @@
+[log]
+level = "info"
+
+[net]
+network = "mainnet"
+
+[p2p]
+# P2P listener address
+# listen = "tcp://0.0.0.1:0"
+listen = "tcp://127.0.0.1:0"
+
+[darkirc]
+irc_listen = "tcp://127.0.0.1:6667"
+rpc_listen = "tcp://127.0.0.1:9605"

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+echo "[Mock DarkIRC] Starting..."
+echo "[Mock DarkIRC] Config path: $2"
+while true; do
+  echo "[Mock DarkIRC] Listening on 127.0.0.1:6667"
+  sleep 10
+done
+

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+.DS_Store
+*.log
+_icons_tmp/
+_theme.css
+.vscode/
+.env
+.env.*
