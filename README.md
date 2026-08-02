@@ -4,8 +4,8 @@ Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](h
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
-- Same **`darkfi-mobile-ffi`** UniFFI crate as Android / iOS (SQLCipher wallet, UnifOMR sync, DarkIRC, send/receive)
-- Local **PIN vault** (AES-GCM + PBKDF2-HMAC-SHA256, 600k iterations) for seed + SQLCipher `wallet_pass`
+- Same **`darkfi-mobile-ffi`** UniFFI crate as Android / iOS (tip `drk` turso/aegis256 wallet, UnifOMR sync, DarkIRC, send/receive)
+- Local **PIN vault** (AES-GCM + PBKDF2-HMAC-SHA256, 600k iterations) for seed + `wallet_pass`
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book, fee tiers
 - Bundled **xmrig** mining to your deposit address via local darkfid stratum
@@ -76,7 +76,7 @@ Or install system `xmrig` — the app can fall back to `/opt/homebrew/bin/xmrig`
 `~/Library/Application Support/nighthawk-app-desktop/`
 
 - `prefs.json`
-- `{testnet,mainnet}/wallet.db` (SQLCipher)
+- `{testnet,mainnet}/wallet.db` (turso + experimental aegis256; wipe after DarkFi pin bumps that change wallet format)
 - `{testnet,mainnet}/cache/`
 - `{testnet,mainnet}/darkirc_db/`
 - PIN vault: `vault.meta.json` + `vault.dat` (no Keychain prompts)
