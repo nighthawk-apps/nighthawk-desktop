@@ -1113,10 +1113,41 @@ pub fn set_network(state: State<'_, AppState>, network: String) -> Result<(), St
 
 #[tauri::command]
 pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
+    validate_lwd_url(&url)?;
     let mut prefs = state.prefs.lock().clone();
     prefs.lightwallet_url = url;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs;
+    Ok(())
+}
+
+fn validate_lwd_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url.trim()).map_err(|e| format!("invalid LWD URL: {e}"))?;
+    let scheme = parsed.scheme();
+    let host = parsed.host_str().ok_or("LWD URL missing host")?;
+    let port = parsed.port_or_known_default().unwrap_or(0);
+    let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1");
+    match scheme {
+        "http" | "tcp" => {
+            if !loopback {
+                return Err("cleartext LWD URL only allowed for loopback".into());
+            }
+        }
+        "https" => {}
+        other => return Err(format!("unsupported LWD URL scheme: {other}")),
+    }
+    if !loopback && ![9067, 9068, 443].contains(&port) {
+        return Err(format!("LWD port {port} not allowed (use 9067, 9068, or 443)"));
+    }
+    if !loopback {
+        let blocked = host.starts_with("10.")
+            || host.starts_with("192.168.")
+            || host.starts_with("127.")
+            || host == "0.0.0.0";
+        if blocked {
+            return Err("private/loopback host not allowed for remote LWD".into());
+        }
+    }
     Ok(())
 }
 

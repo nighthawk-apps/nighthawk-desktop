@@ -261,8 +261,21 @@ export class ChatScreen extends LitElement {
           }
         }
         this.messages = [...this.messages, display].slice(-200);
+        this.scrollToBottom();
       }
     });
+  }
+
+  private scrollToBottom() {
+    requestAnimationFrame(() => {
+      const el = this.shadowRoot?.querySelector(".msgs");
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+
+  updated() {
+    // Scroll to bottom after every render so chat always shows newest messages.
+    this.scrollToBottom();
   }
 
   disconnectedCallback() {

@@ -35,12 +35,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 blake3 = "1.8"
 argon2 = "0.5"
+url = "2"
 
 # Same UniFFI crate as mobile / other clients.
 # Use the real android-tree path (not the GitHub/darkfi-mobile-ffi symlink):
 # relative `../../third_party/darkfi` inside the FFI crate resolves incorrectly
 # when Cargo follows the symlink from /Users/adi/GitHub/darkfi-mobile-ffi.
 darkfi-mobile-ffi = { path = "../../new-nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
+async-stream = "0.3.6"
 
 [patch.crates-io]
 halo2_proofs = { git = "https://github.com/parazyd/halo2", branch = "v050" }

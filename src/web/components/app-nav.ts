@@ -10,6 +10,7 @@ export class AppNav extends LitElement {
       display: flex;
       gap: 4px;
       padding: 8px 12px;
+      padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
       background: var(--color-charcoal-raised);
       border-top: 1px solid var(--color-steel-border-muted);
     }

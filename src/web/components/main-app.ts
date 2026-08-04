@@ -26,6 +26,7 @@ export class MainApp extends LitElement {
       display: flex;
       flex-direction: column;
       height: 100vh;
+      height: 100dvh;
       background: var(--color-moonlit);
       color: var(--color-text-body);
       font-family: var(--font-family-base);
