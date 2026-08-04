@@ -54,12 +54,13 @@ impl Default for Prefs {
             lightwallet_url: network.default_lwd().to_string(),
             darkfid_rpc_url: None,
             stratum_url: network.default_stratum().to_string(),
-            use_tor: true,
+            // Direct to Studio ngrok for testnet; enable Tor in settings if desired.
+            use_tor: false,
             tor_socks_port: 9150,
             mine_threads: 12,
             chat_nick: "nighthawk".to_string(),
             birthday_height: 0,
-            lightwallet_tls_pin_sha256: None,
+            lightwallet_tls_pin_sha256: network.default_lwd_tls_pin().map(str::to_string),
             fee_tier: default_fee_tier(),
             active_wallet_id: default_wallet_id(),
         }
