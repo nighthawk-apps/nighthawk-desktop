@@ -3,7 +3,29 @@ import { customElement, state } from "lit/decorators.js";
 import { api, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-const CHANNELS = ["#dev", "#memes", "#random", "#markets", "#philosophy"];
+/** Match mobile DarkfiChatDefaults.DEFAULT_PUBLIC_CHANNELS. */
+const CHANNELS = [
+  "#dev",
+  "#media",
+  "#hackers",
+  "#memes",
+  "#philosophy",
+  "#markets",
+  "#math",
+  "#random",
+  "#lunardao",
+];
+
+/** Canonical channel key: leading `#`, lowercased (IRC channels are case-insensitive). */
+function chanKey(channel: string): string {
+  const t = channel.trim();
+  const withHash = t.startsWith("#") ? t : `#${t}`;
+  return withHash.toLowerCase();
+}
+
+function sameChannel(a: string, b: string): boolean {
+  return chanKey(a) === chanKey(b);
+}
 
 @customElement("chat-screen")
 export class ChatScreen extends LitElement {
@@ -18,10 +40,17 @@ export class ChatScreen extends LitElement {
   @state() private dmMode = false;
   @state() private decryptedHint = "";
   @state() private toastMessage = "";
+  @state() private nick = "";
+  /** Per-channel history (oldest → newest), like mobile channelMessages. */
+  private channelMessages: Record<string, ChatMessage[]> = {};
+  /** Per-channel unread counts, like mobile Channel.unreadCount. */
+  @state() private unreadCounts: Record<string, number> = {};
+  private seenEventIds = new Set<string>();
   private unlisten?: UnlistenFn;
   private toastTimer?: number;
   private touchTimer?: number;
   private statusPoll?: number;
+  private prevMessageCount = 0;
 
   private static phaseLabel(phase: string): string {
     switch (phase) {
@@ -86,7 +115,6 @@ export class ChatScreen extends LitElement {
       try {
         const next = await api.chatStatus();
         this.status = next;
-        // Keep polling while connected so peer loss / resync updates the label.
         if (next === "stopped" || next === "not_running" || next === "failed") {
           this.stopStatusPoll();
         }
@@ -103,6 +131,7 @@ export class ChatScreen extends LitElement {
       height: 100%;
       padding: 12px 16px;
       box-sizing: border-box;
+      min-height: 0;
     }
     .top {
       display: flex;
@@ -110,6 +139,7 @@ export class ChatScreen extends LitElement {
       align-items: center;
       margin-bottom: 10px;
       flex-wrap: wrap;
+      flex-shrink: 0;
     }
     select,
     button,
@@ -130,6 +160,7 @@ export class ChatScreen extends LitElement {
     }
     .msgs {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       background: var(--color-ink-panel);
       border-radius: var(--border-radius-md);
@@ -137,6 +168,15 @@ export class ChatScreen extends LitElement {
       font-size: var(--font-size-sm);
       user-select: text;
       -webkit-user-select: text;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Pin the thread to the bottom of the pane (mobile-style). */
+    .msgs-inner {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      width: 100%;
     }
     .m {
       margin-bottom: 8px;
@@ -146,9 +186,14 @@ export class ChatScreen extends LitElement {
       padding: 4px 6px;
       border-radius: 6px;
       transition: background 0.15s ease;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .m:hover {
       background: rgba(255, 255, 255, 0.05);
+    }
+    .m.system .nick {
+      color: var(--color-text-muted);
     }
     .m .content {
       user-select: text;
@@ -164,6 +209,7 @@ export class ChatScreen extends LitElement {
       display: flex;
       gap: 8px;
       margin-top: 10px;
+      flex-shrink: 0;
     }
     .composer input {
       flex: 1;
@@ -193,13 +239,16 @@ export class ChatScreen extends LitElement {
     .err {
       color: var(--color-dangerous);
       font-size: var(--font-size-sm);
+      flex-shrink: 0;
     }
     .dm {
       margin-top: 8px;
+      margin-bottom: 8px;
       padding: 10px;
       background: var(--color-charcoal-raised);
       border-radius: var(--border-radius-md);
       font-size: var(--font-size-xs);
+      flex-shrink: 0;
     }
     .dm code {
       word-break: break-all;
@@ -218,6 +267,11 @@ export class ChatScreen extends LitElement {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       z-index: 1000;
     }
+    .nick-chip {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      margin-left: auto;
+    }
   `;
 
   async connectedCallback() {
@@ -231,51 +285,119 @@ export class ChatScreen extends LitElement {
       this.startStatusPoll();
     }
     try {
+      this.nick = await api.getChatNick();
+    } catch {
+      this.nick = "";
+    }
+    try {
       this.dmKeys = await api.dmLoadKeypair();
     } catch {
       this.dmKeys = null;
     }
-    // Drop any legacy webview-local secret.
     try {
       localStorage.removeItem("nighthawk.dm.keypair");
     } catch {
       /* ignore */
     }
     this.unlisten = await api.onChatMessage(async (m) => {
-      if (
-        m.channel === this.channel ||
-        m.channel.replace(/^#/, "") === this.channel.replace(/^#/, "")
-      ) {
-        let display = m;
-        if (this.dmMode && this.dmKeys && this.peerPublic) {
-          try {
-            const plain = await api.dmDecrypt({
-              mySecretB58: this.dmKeys.secretB58,
-              theirPublicB58: this.peerPublic,
-              ciphertextB58: m.message,
-            });
-            display = { ...m, message: plain };
-            this.decryptedHint = "DM decrypted";
-          } catch {
-            /* leave ciphertext */
-          }
-        }
-        this.messages = [...this.messages, display].slice(-200);
-        this.scrollToBottom();
-      }
+      await this.ingestMessage(m);
     });
+    this.loadChannel(this.channel);
+  }
+
+  private async ingestMessage(m: ChatMessage) {
+    if (this.seenEventIds.has(m.eventId)) return;
+    this.seenEventIds.add(m.eventId);
+
+    let display = m;
+    if (this.dmMode && this.dmKeys && this.peerPublic) {
+      try {
+        const plain = await api.dmDecrypt({
+          mySecretB58: this.dmKeys.secretB58,
+          theirPublicB58: this.peerPublic,
+          ciphertextB58: m.message,
+        });
+        display = { ...m, message: plain };
+        this.decryptedHint = "DM decrypted";
+      } catch {
+        /* leave ciphertext */
+      }
+    }
+
+    const key = chanKey(m.channel);
+    const prior = this.channelMessages[key] ?? [];
+    this.channelMessages[key] = [...prior, display].slice(-500);
+
+    if (sameChannel(m.channel, this.channel)) {
+      this.messages = this.channelMessages[key];
+    } else {
+      // Increment unread for non-active channels (matches mobile unreadCount).
+      this.unreadCounts = {
+        ...this.unreadCounts,
+        [key]: (this.unreadCounts[key] ?? 0) + 1,
+      };
+      if (!this.channelsList.some((c) => sameChannel(c, key))) {
+        // Auto-add unknown channels that receive traffic (e.g. /msg targets).
+        this.channelsList = [...this.channelsList, key];
+      }
+    }
+  }
+
+  private persistActiveChannel() {
+    this.channelMessages[chanKey(this.channel)] = this.messages;
+  }
+
+  private loadChannel(channel: string) {
+    const key = chanKey(channel);
+    this.channel = key;
+    this.messages = [...(this.channelMessages[key] ?? [])];
+    this.prevMessageCount = -1; // force scroll after switch
+    // Clear unread for the channel we're switching to.
+    if ((this.unreadCounts[key] ?? 0) > 0) {
+      this.unreadCounts = { ...this.unreadCounts, [key]: 0 };
+    }
+  }
+
+  /** Failed → Retry; stopped / not running → Connect (one button, like mobile). */
+  private get connectLabel(): string {
+    return this.status === "failed" ? "Retry" : "Connect";
+  }
+
+  private switchChannel(channel: string) {
+    if (sameChannel(channel, this.channel)) return;
+    this.persistActiveChannel();
+    this.loadChannel(channel);
+  }
+
+  private pushSystem(message: string, channel = this.channel) {
+    const m: ChatMessage = {
+      eventId: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channel,
+      nick: "System",
+      message,
+      timestamp: Date.now(),
+    };
+    const key = chanKey(channel);
+    const prior = this.channelMessages[key] ?? [];
+    this.channelMessages[key] = [...prior, m].slice(-500);
+    if (sameChannel(channel, this.channel)) {
+      this.messages = this.channelMessages[key];
+    }
   }
 
   private scrollToBottom() {
     requestAnimationFrame(() => {
-      const el = this.shadowRoot?.querySelector(".msgs");
+      const el = this.shadowRoot?.querySelector(".msgs") as HTMLElement | null;
       if (el) el.scrollTop = el.scrollHeight;
     });
   }
 
   updated() {
-    // Scroll to bottom after every render so chat always shows newest messages.
-    this.scrollToBottom();
+    // Only auto-scroll when the message list grows (not on every keystroke).
+    if (this.messages.length !== this.prevMessageCount) {
+      this.prevMessageCount = this.messages.length;
+      this.scrollToBottom();
+    }
   }
 
   disconnectedCallback() {
@@ -357,6 +479,7 @@ export class ChatScreen extends LitElement {
     if (!this.draft.trim()) return;
     const text = this.draft.trim();
     this.draft = "";
+    this.error = "";
 
     if (text.startsWith("/")) {
       const parts = text.split(/\s+/);
@@ -365,119 +488,120 @@ export class ChatScreen extends LitElement {
 
       switch (cmd) {
         case "/nick": {
-          if (arg && arg.length <= 24) {
-            try {
-              await api.setChatNick(arg);
-              this.messages = [
-                ...this.messages,
-                { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: `Your nickname is now: ${arg}`, timestamp: Date.now() },
-              ];
-            } catch (e: any) {
-              this.error = String(e);
-            }
-          } else {
-            this.messages = [
-              ...this.messages,
-              { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: "Invalid nickname. Usage: /nick <name> (1–24 alphanumeric/underscore characters)", timestamp: Date.now() },
-            ];
+          if (!arg) {
+            this.pushSystem(
+              "Usage: /nick <name> (1–24 alphanumeric/underscore characters)",
+            );
+            return;
+          }
+          try {
+            await api.setChatNick(arg);
+            this.nick = await api.getChatNick();
+            this.pushSystem(`Your nickname is now: ${this.nick}`);
+          } catch (e: any) {
+            this.error = String(e);
+            this.pushSystem(String(e));
           }
           return;
         }
         case "/join": {
-          if (arg) {
-            const targetChan = arg.startsWith("#") ? arg : `#${arg}`;
-            if (!this.channelsList.includes(targetChan)) {
-              this.channelsList = [...this.channelsList, targetChan];
-            }
-            this.channel = targetChan;
-            this.messages = [
-              ...this.messages,
-              { eventId: `sys-${Date.now()}`, channel: targetChan, nick: "System", message: `Joined channel: ${targetChan}`, timestamp: Date.now() },
-            ];
-          } else {
-            this.messages = [
-              ...this.messages,
-              { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: "Usage: /join <#channel>", timestamp: Date.now() },
-            ];
+          if (!arg) {
+            this.pushSystem("Usage: /join <#channel>");
+            return;
           }
+          const targetChan = chanKey(arg);
+          if (!this.channelsList.some((c) => sameChannel(c, targetChan))) {
+            this.channelsList = [...this.channelsList, targetChan];
+          }
+          this.switchChannel(targetChan);
+          this.pushSystem(`Joined channel: ${targetChan}`, targetChan);
           return;
         }
         case "/part":
         case "/leave": {
-          this.channelsList = this.channelsList.filter((c) => c !== this.channel);
-          if (this.channelsList.length > 0) {
-            this.channel = this.channelsList[0];
+          const leaving = this.channel;
+          this.persistActiveChannel();
+          delete this.channelMessages[chanKey(leaving)];
+          this.channelsList = this.channelsList.filter(
+            (c) => !sameChannel(c, leaving),
+          );
+          if (this.channelsList.length === 0) {
+            this.channelsList = ["#dev"];
           }
-          this.messages = [];
+          this.loadChannel(this.channelsList[0]);
+          this.pushSystem(`Left channel: ${leaving}`);
           return;
         }
         case "/clear": {
+          const key = chanKey(this.channel);
+          this.channelMessages[key] = [];
           this.messages = [];
           return;
         }
         case "/me": {
-          if (arg) {
-            try {
-              const nick = await api.getChatNick();
-              const actionText = `* ${nick} ${arg}`;
-              // Send the pre-formatted action text (no /me prefix) so the
-              // backend doesn't double-parse it as a slash command.
-              await api.chatSend(this.channel, actionText);
-            } catch (e: any) {
-              this.error = String(e);
-            }
-          } else {
-            this.messages = [
-              ...this.messages,
-              { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: "Usage: /me <action>", timestamp: Date.now() },
-            ];
+          if (!arg) {
+            this.pushSystem("Usage: /me <action>");
+            return;
+          }
+          try {
+            const nick = this.nick || (await api.getChatNick());
+            const actionText = `* ${nick} ${arg}`;
+            this.pushOptimistic(nick, actionText);
+            await api.chatSend(this.channel, actionText);
+          } catch (e: any) {
+            this.error = String(e);
           }
           return;
         }
         case "/msg": {
           const msgParts = arg.split(/\s+/);
-          if (msgParts.length >= 2) {
-            const target = msgParts[0];
-            let msgContent = arg.substring(target.length).trim();
-            try {
-              // Send directly to target — the content is a plain message,
-              // not a command. Prefix handling is already done above.
-              await api.chatSend(target, msgContent);
-              this.messages = [
-                ...this.messages,
-                { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: `Sent message to ${target}: ${msgContent}`, timestamp: Date.now() },
-              ];
-            } catch (e: any) {
-              this.error = String(e);
-            }
-          } else {
-            this.messages = [
-              ...this.messages,
-              { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: "Usage: /msg <target> <message>", timestamp: Date.now() },
-            ];
+          if (msgParts.length < 2) {
+            this.pushSystem("Usage: /msg <target> <message>");
+            return;
+          }
+          const target = msgParts[0];
+          const msgContent = arg.substring(target.length).trim();
+          try {
+            await api.chatSend(target, msgContent);
+            this.pushSystem(`→ ${target}: ${msgContent}`);
+          } catch (e: any) {
+            this.error = String(e);
           }
           return;
         }
+        case "/whoami": {
+          try {
+            this.nick = await api.getChatNick();
+            this.pushSystem(`You are ${this.nick || "(unnamed)"} on ${this.channel}`);
+          } catch (e: any) {
+            this.error = String(e);
+          }
+          return;
+        }
+        case "/channels":
+        case "/list": {
+          this.pushSystem(
+            `Channels: ${this.channelsList.join(", ")}\nActive: ${this.channel}`,
+          );
+          return;
+        }
         case "/help": {
-          const helpText = `Available DarkIRC commands:
-  /nick <name> — Change nickname (1–24 characters)
+          this.pushSystem(`Available DarkIRC commands:
+  /nick <name> — Change nickname (1–24 alphanumeric/underscore)
+  /whoami — Show your current nickname
   /join <#channel> — Join or switch to channel
-  /part — Leave current channel
-  /clear — Clear messages in current view
+  /part | /leave — Leave current channel
+  /channels | /list — List joined channels
+  /clear — Clear messages in current channel view
   /me <action> — Send action message (* nick action)
-  /msg <target> <text> — Send message to target
-  /help — Show this help message`;
-          this.messages = [
-            ...this.messages,
-            { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: helpText, timestamp: Date.now() },
-          ];
+  /msg <target> <text> — Send message to nick or #channel
+  /help — Show this help message`);
           return;
         }
         default: {
-          this.messages = [
-            ...this.messages,
-            { eventId: `sys-${Date.now()}`, channel: this.channel, nick: "System", message: `Unknown command '${cmd}'. Type /help for DarkIRC commands.`, timestamp: Date.now() },
-          ];
+          this.pushSystem(
+            `Unknown command '${cmd}'. Type /help for DarkIRC commands.`,
+          );
           return;
         }
       }
@@ -485,6 +609,7 @@ export class ChatScreen extends LitElement {
 
     try {
       let body = text;
+      let displayBody = text;
       if (this.dmMode) {
         if (!this.dmKeys || !this.peerPublic.trim()) {
           this.error = "Generate DM keys and set peer public key first";
@@ -496,10 +621,27 @@ export class ChatScreen extends LitElement {
           plaintext: body,
         });
       }
+      const nick = this.nick || (await api.getChatNick()) || "me";
+      this.pushOptimistic(nick, displayBody);
       await api.chatSend(this.channel, body);
     } catch (e: any) {
       this.error = String(e);
     }
+  }
+
+  private pushOptimistic(nick: string, message: string) {
+    const m: ChatMessage = {
+      eventId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      channel: this.channel,
+      nick,
+      message,
+      timestamp: Date.now(),
+    };
+    // Don't add to seenEventIds — network echo uses a different event id.
+    const key = chanKey(this.channel);
+    const prior = this.channelMessages[key] ?? [];
+    this.channelMessages[key] = [...prior, m].slice(-500);
+    this.messages = this.channelMessages[key];
   }
 
   render() {
@@ -508,13 +650,15 @@ export class ChatScreen extends LitElement {
         <select
           .value=${this.channel}
           @change=${(e: Event) => {
-            this.channel = (e.target as HTMLSelectElement).value;
-            this.messages = [];
+            this.switchChannel((e.target as HTMLSelectElement).value);
           }}
         >
-          ${this.channelsList.map((c) => html`<option value=${c}>${c}</option>`)}
+          ${this.channelsList.map((c) => {
+            const badge = this.unreadCounts[chanKey(c)] ?? 0;
+            return html`<option value=${c}>${c}${badge > 0 ? ` (${badge})` : ""}</option>`;
+          })}
         </select>
-        <button class="primary" @click=${this.start}>Connect</button>
+        <button class="primary" @click=${this.start}>${this.connectLabel}</button>
         <button @click=${this.stop}>Stop</button>
         <span
           class="conn-status ${ChatScreen.phaseClass(this.status)}"
@@ -531,6 +675,9 @@ export class ChatScreen extends LitElement {
           />
           E2E DM
         </label>
+        ${this.nick
+          ? html`<span class="nick-chip" title="Current nick">@${this.nick}</span>`
+          : null}
       </div>
       ${this.dmMode
         ? html`
@@ -557,28 +704,35 @@ export class ChatScreen extends LitElement {
           `
         : null}
       <div class="msgs">
-        ${this.messages.map(
-          (m) => html`
-            <div
-              class="m"
-              title="Click, long press, or right-click to copy"
-              @contextmenu=${(e: MouseEvent) => {
-                e.preventDefault();
-                this.copyMessage(m.message);
-              }}
-              @touchstart=${() => this.handleTouchStart(m.message)}
-              @touchend=${() => this.handleTouchEnd()}
-              @touchcancel=${() => this.handleTouchEnd()}
-            >
-              <span class="nick">${m.nick}</span>: <span class="content">${m.message}</span>
-            </div>
-          `,
-        )}
+        <div class="msgs-inner">
+          ${this.messages.map(
+            (m) => html`
+              <div
+                class="m ${m.nick === "System" ? "system" : ""}"
+                title="Click, long press, or right-click to copy"
+                @contextmenu=${(e: MouseEvent) => {
+                  e.preventDefault();
+                  this.copyMessage(m.message);
+                }}
+                @touchstart=${() => this.handleTouchStart(m.message)}
+                @touchend=${() => this.handleTouchEnd()}
+                @touchcancel=${() => this.handleTouchEnd()}
+              >
+                <span class="nick">${m.nick}</span>:
+                <span class="content">${m.message}</span>
+              </div>
+            `,
+          )}
+        </div>
       </div>
-      ${this.toastMessage ? html`<div class="toast">${this.toastMessage}</div>` : null}
+      ${this.toastMessage
+        ? html`<div class="toast">${this.toastMessage}</div>`
+        : null}
       <div class="composer">
         <input
-          placeholder=${this.dmMode ? "Encrypted message…" : "Message…"}
+          placeholder=${this.dmMode
+            ? "Encrypted message…"
+            : "Message or /command…"}
           .value=${this.draft}
           @keydown=${(e: KeyboardEvent) => e.key === "Enter" && this.send()}
           @input=${(e: Event) =>
