@@ -2,6 +2,14 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { api, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import {
+  clearDmUnread,
+  loadDmContacts,
+  removeDmContact,
+  saveDmContacts,
+  upsertDmContact,
+  type DmContact,
+} from "../lib/dm-contacts";
 
 /** Match mobile DarkfiChatDefaults.DEFAULT_PUBLIC_CHANNELS. */
 const CHANNELS = [
@@ -41,6 +49,9 @@ export class ChatScreen extends LitElement {
   @state() private decryptedHint = "";
   @state() private toastMessage = "";
   @state() private nick = "";
+  @state() private dmContacts: DmContact[] = [];
+  @state() private dmContactLabel = "";
+  @state() private autoReconnect = true;
   /** Per-channel history (oldest → newest), like mobile channelMessages. */
   private channelMessages: Record<string, ChatMessage[]> = {};
   /** Per-channel unread counts, like mobile Channel.unreadCount. */
@@ -51,6 +62,9 @@ export class ChatScreen extends LitElement {
   private touchTimer?: number;
   private statusPoll?: number;
   private prevMessageCount = 0;
+  private reconnectTimer?: number;
+  private wasConnected = false;
+  private reconnectAttempts = 0;
 
   private static phaseLabel(phase: string): string {
     switch (phase) {
@@ -113,15 +127,51 @@ export class ChatScreen extends LitElement {
     this.stopStatusPoll();
     this.statusPoll = window.setInterval(async () => {
       try {
+        const prev = this.status;
         const next = await api.chatStatus();
         this.status = next;
-        if (next === "stopped" || next === "not_running" || next === "failed") {
+        if (next === "connected" || next === "running") {
+          this.wasConnected = true;
+          this.reconnectAttempts = 0;
+        }
+        // After a successful session, daemon death → schedule reconnect.
+        // (Do not treat waiting_for_peers as fatal — that is normal DAG sync.)
+        if (
+          this.autoReconnect &&
+          this.wasConnected &&
+          (next === "failed" || next === "not_running")
+        ) {
+          this.scheduleReconnect();
+        }
+        if (next === "stopped" || next === "not_running") {
           this.stopStatusPoll();
         }
       } catch {
         /* ignore transient poll errors */
       }
     }, 500);
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) return;
+    if (this.reconnectAttempts >= 5) {
+      this.pushSystem("Auto-reconnect gave up after 5 attempts — tap Retry.");
+      return;
+    }
+    const delay = Math.min(15_000, 2000 * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts += 1;
+    this.pushSystem(
+      `Connection lost — retrying in ${Math.round(delay / 1000)}s…`,
+    );
+    this.reconnectTimer = window.setTimeout(async () => {
+      this.reconnectTimer = undefined;
+      try {
+        await api.chatStop().catch(() => undefined);
+        await this.start();
+      } catch {
+        this.scheduleReconnect();
+      }
+    }, delay);
   }
 
   static styles = css`
@@ -164,27 +214,37 @@ export class ChatScreen extends LitElement {
       overflow-y: auto;
       background: var(--color-ink-panel);
       border-radius: var(--border-radius-md);
-      padding: 12px;
+      padding: 8px 10px;
       font-size: var(--font-size-sm);
+      line-height: 1.4;
+      text-align: left;
       user-select: text;
       -webkit-user-select: text;
       display: flex;
       flex-direction: column;
+      align-items: stretch;
     }
     /* Pin the thread to the bottom of the pane (mobile-style). */
     .msgs-inner {
       margin-top: auto;
       display: flex;
       flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
       width: 100%;
     }
     .m {
-      margin-bottom: 8px;
+      display: grid;
+      grid-template-columns: minmax(4.5rem, max-content) 1fr;
+      column-gap: 8px;
+      row-gap: 0;
+      margin: 0;
+      padding: 1px 4px;
+      border-radius: 4px;
+      text-align: left;
       user-select: text;
       -webkit-user-select: text;
       cursor: pointer;
-      padding: 4px 6px;
-      border-radius: 6px;
       transition: background 0.15s ease;
       white-space: pre-wrap;
       word-break: break-word;
@@ -196,12 +256,19 @@ export class ChatScreen extends LitElement {
       color: var(--color-text-muted);
     }
     .m .content {
+      text-align: left;
+      min-width: 0;
       user-select: text;
       -webkit-user-select: text;
+      color: var(--color-text-body);
     }
     .nick {
       color: var(--color-accent);
       font-weight: 600;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       user-select: text;
       -webkit-user-select: text;
     }
@@ -272,6 +339,29 @@ export class ChatScreen extends LitElement {
       color: var(--color-text-muted);
       margin-left: auto;
     }
+    .contacts {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .contact {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: var(--font-size-xs);
+    }
+    .contact button {
+      padding: 4px 8px;
+      font-size: var(--font-size-xs);
+    }
+    .badge {
+      background: var(--color-accent);
+      color: var(--color-on-accent);
+      border-radius: 999px;
+      padding: 0 6px;
+      font-weight: 700;
+    }
   `;
 
   async connectedCallback() {
@@ -294,6 +384,7 @@ export class ChatScreen extends LitElement {
     } catch {
       this.dmKeys = null;
     }
+    this.dmContacts = loadDmContacts();
     try {
       localStorage.removeItem("nighthawk.dm.keypair");
     } catch {
@@ -404,6 +495,7 @@ export class ChatScreen extends LitElement {
     super.disconnectedCallback();
     this.unlisten?.();
     this.stopStatusPoll();
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
     if (this.toastTimer) window.clearTimeout(this.toastTimer);
     if (this.touchTimer) window.clearTimeout(this.touchTimer);
   }
@@ -447,6 +539,11 @@ export class ChatScreen extends LitElement {
 
   private async start() {
     this.error = "";
+    // Retry path: stop a failed/stale daemon before starting again.
+    const cur = await api.chatStatus().catch(() => this.status);
+    if (cur === "failed" || cur === "running" || cur === "stopping") {
+      await api.chatStop().catch(() => undefined);
+    }
     this.status = "starting";
     this.startStatusPoll();
     try {
@@ -458,11 +555,47 @@ export class ChatScreen extends LitElement {
     } catch (e: any) {
       this.error = String(e);
       this.status = await api.chatStatus().catch(() => "failed");
-      this.stopStatusPoll();
+      if (this.autoReconnect && this.wasConnected) {
+        this.scheduleReconnect();
+      } else {
+        this.stopStatusPoll();
+      }
     }
   }
 
+  private saveContact() {
+    if (!this.peerPublic.trim()) {
+      this.error = "Enter peer public key first";
+      return;
+    }
+    this.dmContacts = upsertDmContact(this.dmContacts, {
+      label: this.dmContactLabel,
+      publicB58: this.peerPublic.trim(),
+    });
+    saveDmContacts(this.dmContacts);
+    this.dmContactLabel = "";
+    this.showToast("DM contact saved");
+  }
+
+  private selectContact(c: DmContact) {
+    this.peerPublic = c.publicB58;
+    this.dmContacts = clearDmUnread(this.dmContacts, c.publicB58);
+    saveDmContacts(this.dmContacts);
+    this.dmMode = true;
+  }
+
+  private deleteContact(id: string) {
+    this.dmContacts = removeDmContact(this.dmContacts, id);
+    saveDmContacts(this.dmContacts);
+  }
+
   private async stop() {
+    this.wasConnected = false;
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     this.status = "stopping";
     this.startStatusPoll();
     try {
@@ -697,6 +830,47 @@ export class ChatScreen extends LitElement {
                 @input=${(e: Event) =>
                   (this.peerPublic = (e.target as HTMLInputElement).value)}
               />
+              <div class="contact" style="margin-top:8px">
+                <input
+                  style="flex:1"
+                  placeholder="Contact label"
+                  .value=${this.dmContactLabel}
+                  @input=${(e: Event) =>
+                    (this.dmContactLabel = (
+                      e.target as HTMLInputElement
+                    ).value)}
+                />
+                <button class="primary" @click=${this.saveContact}>
+                  Save contact
+                </button>
+              </div>
+              ${this.dmContacts.length
+                ? html`
+                    <div class="contacts">
+                      ${this.dmContacts.map(
+                        (c) => html`
+                          <div class="contact">
+                            <button
+                              class="primary"
+                              @click=${() => this.selectContact(c)}
+                            >
+                              ${c.label}
+                              ${c.unread > 0
+                                ? html`<span class="badge">${c.unread}</span>`
+                                : null}
+                            </button>
+                            <code title=${c.publicB58}
+                              >${c.publicB58.slice(0, 10)}…</code
+                            >
+                            <button @click=${() => this.deleteContact(c.id)}>
+                              Remove
+                            </button>
+                          </div>
+                        `,
+                      )}
+                    </div>
+                  `
+                : html`<p class="status">No DM contacts yet</p>`}
               ${this.decryptedHint
                 ? html`<p class="status">${this.decryptedHint}</p>`
                 : null}
@@ -718,7 +892,7 @@ export class ChatScreen extends LitElement {
                 @touchend=${() => this.handleTouchEnd()}
                 @touchcancel=${() => this.handleTouchEnd()}
               >
-                <span class="nick">${m.nick}</span>:
+                <span class="nick">&lt;${m.nick}&gt;</span>
                 <span class="content">${m.message}</span>
               </div>
             `,

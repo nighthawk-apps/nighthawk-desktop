@@ -14,13 +14,13 @@ import {
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
   @state() private prefs: Prefs | null = null;
-  @state() private pin = "";
   @state() private backup: string[] = [];
   @state() private message = "";
   @state() private error = "";
   @state() private artiRunning = false;
   @state() private wallets: WalletProfiles | null = null;
   @state() private newWalletLabel = "";
+  @state() private renameLabel = "";
   @state() private daos: DaoSummary[] = [];
   @state() private proposals: DaoProposalSummary[] = [];
   @state() private selectedDao = "";
@@ -134,7 +134,7 @@ export class SettingsScreen extends LitElement {
     try {
       await api.setNetwork(n);
       this.prefs = await api.getPrefs();
-      this.message = `Network set to ${n}. Re-unlock wallet if needed.`;
+      this.message = `Network set to ${n}. Restart if balances look stale.`;
       this.dispatchEvent(
         new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
       );
@@ -145,8 +145,8 @@ export class SettingsScreen extends LitElement {
 
   private async doBackup() {
     try {
-      this.backup = await api.backupMnemonic(this.pin);
-      this.message = "Seed unlocked — store safely";
+      this.backup = await api.backupMnemonic();
+      this.message = "Seed shown — store safely";
     } catch (e: any) {
       this.error = String(e);
     }
@@ -155,7 +155,7 @@ export class SettingsScreen extends LitElement {
   private async wipe() {
     if (!confirm("Wipe all wallet data on this device?")) return;
     try {
-      await api.wipeWallet(this.pin);
+      await api.wipeWallet();
       location.reload();
     } catch (e: any) {
       this.error = String(e);
@@ -181,7 +181,7 @@ export class SettingsScreen extends LitElement {
       await api.walletsCreate(this.newWalletLabel || "New wallet");
       this.wallets = await api.walletsList();
       this.message =
-        "New wallet profile created — complete onboarding / restore, then unlock.";
+        "New wallet profile created — complete onboarding / restore.";
       location.reload();
     } catch (e: any) {
       this.error = String(e);
@@ -191,7 +191,49 @@ export class SettingsScreen extends LitElement {
   private async switchWallet(id: string) {
     try {
       await api.walletsSwitch(id);
-      this.message = "Switched wallet — unlock with that profile’s PIN";
+      this.message = "Switched wallet — reloading…";
+      location.reload();
+    } catch (e: any) {
+      this.error = String(e);
+    }
+  }
+
+  private async renameWallet() {
+    if (!this.wallets) return;
+    const id = this.wallets.activeId;
+    const label = this.renameLabel.trim();
+    if (!label) {
+      this.error = "Enter a new label";
+      return;
+    }
+    try {
+      await api.walletsRename(id, label);
+      this.wallets = await api.walletsList();
+      this.renameLabel = "";
+      this.message = "Wallet renamed";
+    } catch (e: any) {
+      this.error = String(e);
+    }
+  }
+
+  private async removeWallet() {
+    if (!this.wallets) return;
+    const id = this.wallets.activeId;
+    if (id === "default") {
+      this.error = "Cannot remove the default wallet profile — use Wipe instead";
+      return;
+    }
+    if (
+      !confirm(
+        `Remove wallet profile "${id}"? This deletes that profile’s vault data.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.walletsRemove(id);
+      this.wallets = await api.walletsList();
+      this.message = "Wallet profile removed — reloading…";
       location.reload();
     } catch (e: any) {
       this.error = String(e);
@@ -359,10 +401,40 @@ export class SettingsScreen extends LitElement {
             Add wallet
           </button>
         </div>
+        <div class="row">
+          <input
+            placeholder="Rename active wallet"
+            .value=${this.renameLabel}
+            @input=${(e: Event) =>
+              (this.renameLabel = (e.target as HTMLInputElement).value)}
+          />
+          <button class="secondary" @click=${this.renameWallet}>Rename</button>
+          <button class="danger" @click=${this.removeWallet}>
+            Remove active
+          </button>
+        </div>
       </div>
 
       <div class="card">
-        <h3>DAO</h3>
+        <h3>DAO Hub</h3>
+        <p class="msg">
+          Lists DAOs already present in this wallet. Import/create is done via
+          the shared FFI / mobile flow — propose and vote once a DAO appears
+          here.
+        </p>
+        <button
+          class="secondary"
+          @click=${async () => {
+            try {
+              this.daos = await api.listDaos();
+              this.message = `Loaded ${this.daos.length} DAO(s)`;
+            } catch (e: any) {
+              this.error = String(e);
+            }
+          }}
+        >
+          Refresh DAO list
+        </button>
         ${this.daos.length === 0
           ? html`<p class="msg">No DAOs imported in this wallet yet.</p>`
           : this.daos.map(
@@ -438,13 +510,7 @@ export class SettingsScreen extends LitElement {
 
       <div class="card">
         <h3>Security</h3>
-        <label>PIN</label>
-        <input
-          type="password"
-          .value=${this.pin}
-          @input=${(e: Event) =>
-            (this.pin = (e.target as HTMLInputElement).value)}
-        />
+        <p>No app PIN — this desktop build opens the wallet automatically.</p>
         <button @click=${this.doBackup}>Show seed backup</button>
         <button class="danger" @click=${this.wipe}>Wipe wallet</button>
         ${this.backup.length

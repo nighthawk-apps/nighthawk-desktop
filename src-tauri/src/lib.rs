@@ -33,8 +33,7 @@ pub fn run() {
             commands::generate_mnemonic,
             commands::create_wallet,
             commands::restore_wallet,
-            commands::unlock_wallet,
-            commands::lock_wallet,
+            commands::open_wallet,
             commands::wallet_balance,
             commands::wallet_address,
             commands::wallet_addresses,
@@ -82,8 +81,6 @@ pub fn run() {
             commands::set_lwd_url,
             commands::backup_mnemonic,
             commands::wipe_wallet,
-            commands::verify_pin,
-            commands::set_pin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nighthawk");

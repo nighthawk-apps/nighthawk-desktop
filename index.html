@@ -4,9 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nighthawk</title>
+    <!-- Inline fallback so a late CSS/JS load never flashes a blank white window. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #0e1012;
+        color: #c4cbd4;
+      }
+    </style>
   </head>
   <body>
     <main-app></main-app>
+    <script>
+      // Surface renderer failures before/without the module bundle.
+      window.addEventListener("error", (e) => {
+        console.error("window.error", e.message, e.filename, e.lineno);
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        console.error("unhandledrejection", e.reason);
+      });
+    </script>
     <script type="module" src="/src/web/main.ts"></script>
   </body>
 </html>

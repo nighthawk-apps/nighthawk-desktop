@@ -1,7 +1,12 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import QRCode from "qrcode";
-import { api, type TokenBalance, type TxRecord } from "../lib/api";
+import {
+  api,
+  type LightSyncState,
+  type TokenBalance,
+  type TxRecord,
+} from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 @customElement("wallet-screen")
@@ -9,6 +14,7 @@ export class WalletScreen extends LitElement {
   @state() private balance = 0;
   @state() private address = "";
   @state() private sync = "";
+  @state() private syncDetail: LightSyncState | null = null;
   @state() private txs: TxRecord[] = [];
   @state() private tokens: TokenBalance[] = [];
   @state() private txExtra: Record<string, { memo?: string; recipient?: string }> =
@@ -17,7 +23,9 @@ export class WalletScreen extends LitElement {
   @state() private error = "";
   @state() private reorgMsg = "";
   @state() private reorgHeight: number | null = null;
+  @state() private refreshing = false;
   private unlistenReorg?: UnlistenFn;
+  private pollTimer?: number;
 
   static styles = css`
     :host {
@@ -32,7 +40,46 @@ export class WalletScreen extends LitElement {
     .sub {
       color: var(--color-text-muted);
       font-size: var(--font-size-sm);
+      margin-bottom: 8px;
+    }
+    .sync-card {
+      background: var(--color-charcoal-raised);
+      border: 1px solid var(--color-steel-border-muted);
+      border-radius: var(--border-radius-lg);
+      padding: 12px 14px;
       margin-bottom: 16px;
+      font-size: var(--font-size-sm);
+    }
+    .sync-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin-bottom: 6px;
+    }
+    .sync-method {
+      font-weight: 700;
+      color: var(--color-text-header);
+    }
+    .sync-method.omr {
+      color: #6fbf73;
+    }
+    .sync-method.trial {
+      color: var(--color-warning, #e0a84a);
+    }
+    .bar {
+      height: 6px;
+      background: var(--color-elevated);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 8px 0 4px;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: var(--color-accent);
+      border-radius: 999px;
+      transition: width 0.3s ease;
     }
     .card {
       background: var(--color-charcoal-raised);
@@ -66,6 +113,10 @@ export class WalletScreen extends LitElement {
       font-family: inherit;
       margin-right: 8px;
     }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
     .tx {
       padding: 10px 0;
       border-bottom: 1px solid var(--color-steel-border-muted);
@@ -94,11 +145,57 @@ export class WalletScreen extends LitElement {
       this.reorgHeight = e.rewoundTo;
     });
     await this.reload();
+    // Poll light-sync while wallet screen is open (desktop has no bg sync).
+    this.pollTimer = window.setInterval(() => this.pollSync(), 4000);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unlistenReorg?.();
+    if (this.pollTimer) window.clearInterval(this.pollTimer);
+  }
+
+  private methodClass(method: string): string {
+    const m = method.toLowerCase();
+    if (m.includes("unifomr") || m.includes("omr")) return "omr";
+    if (m.includes("trial")) return "trial";
+    return "";
+  }
+
+  private methodLabel(snap: LightSyncState): string {
+    const m = snap.syncMethod || snap.syncType || "Unknown";
+    if (/unifomr|omr/i.test(m)) return "UnifOMR";
+    if (/trial/i.test(m)) return "Trial decrypt";
+    return m;
+  }
+
+  private progressPct(snap: LightSyncState): number {
+    if (!snap.chainTip || snap.chainTip <= 0) return 0;
+    return Math.min(100, Math.round((snap.scannedHeight / snap.chainTip) * 100));
+  }
+
+  private async pollSync() {
+    try {
+      const snap = await api.walletLightSync();
+      this.applySync(snap);
+      // Soft refresh balance occasionally without full tx reload
+      this.balance = await api.walletBalance();
+    } catch {
+      /* ignore transient poll errors */
+    }
+  }
+
+  private applySync(snap: LightSyncState) {
+    this.syncDetail = snap;
+    const method = this.methodLabel(snap);
+    this.sync = `${method} · ${snap.scannedHeight}/${snap.chainTip} · ${snap.statusMessage}`;
+    this.dispatchEvent(
+      new CustomEvent("sync-update", {
+        detail: this.sync,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private async reload() {
@@ -107,7 +204,7 @@ export class WalletScreen extends LitElement {
       this.balance = await api.walletBalance();
       this.address = await api.walletAddress();
       const snap = await api.walletLightSync();
-      this.sync = `${snap.syncMethod} · ${snap.scannedHeight}/${snap.chainTip} · ${snap.statusMessage}`;
+      this.applySync(snap);
       this.txs = await api.walletListTxs();
       try {
         this.tokens = await api.listTokenBalances();
@@ -129,13 +226,6 @@ export class WalletScreen extends LitElement {
       }
       this.txExtra = extras;
       this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 160 });
-      this.dispatchEvent(
-        new CustomEvent("sync-update", {
-          detail: this.sync,
-          bubbles: true,
-          composed: true,
-        }),
-      );
     } catch (e: any) {
       this.error = String(e);
     }
@@ -143,6 +233,7 @@ export class WalletScreen extends LitElement {
 
   private async refresh() {
     this.error = "";
+    this.refreshing = true;
     try {
       await api.walletRefresh();
       await this.reload();
@@ -152,6 +243,8 @@ export class WalletScreen extends LitElement {
       } catch {
         this.error = String(e);
       }
+    } finally {
+      this.refreshing = false;
     }
   }
 
@@ -173,9 +266,34 @@ export class WalletScreen extends LitElement {
 
   render() {
     const drk = (this.balance / 1e8).toFixed(8);
+    const snap = this.syncDetail;
+    const pct = snap ? this.progressPct(snap) : 0;
     return html`
       <div class="balance">${drk} DRK</div>
-      <div class="sub">${this.sync || "Syncing…"}</div>
+      ${snap
+        ? html`
+            <div class="sync-card">
+              <div class="sync-row">
+                <span class="sync-method ${this.methodClass(snap.syncMethod)}"
+                  >${this.methodLabel(snap)}</span
+                >
+                <span class="sub" style="margin:0"
+                  >${snap.scannedHeight} / ${snap.chainTip} (${pct}%)</span
+                >
+              </div>
+              <div class="bar"><span style="width:${pct}%"></span></div>
+              <div class="sub" style="margin:0">
+                ${snap.statusMessage || snap.syncTypeMessage || "—"}
+                ${snap.omrAvailable ? " · OMR available" : " · OMR unavailable"}
+              </div>
+              ${snap.fallbackUserMessage
+                ? html`<div class="warn" style="margin-top:8px;margin-bottom:0">
+                    ${snap.fallbackUserMessage}
+                  </div>`
+                : null}
+            </div>
+          `
+        : html`<div class="sub">${this.sync || "Syncing…"}</div>`}
       ${this.reorgMsg
         ? html`<p class="warn">
             Reorg: ${this.reorgMsg}
@@ -191,7 +309,9 @@ export class WalletScreen extends LitElement {
         ${this.qr ? html`<img src=${this.qr} alt="QR" />` : null}
         <div>
           <button @click=${this.copy}>Copy address</button>
-          <button @click=${this.refresh}>Refresh</button>
+          <button ?disabled=${this.refreshing} @click=${this.refresh}>
+            ${this.refreshing ? "Refreshing…" : "Refresh"}
+          </button>
         </div>
       </div>
       ${this.tokens.length

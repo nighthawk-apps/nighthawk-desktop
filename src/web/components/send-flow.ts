@@ -1,5 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import jsQR from "jsqr";
 import {
   api,
   prefsFeeTier,
@@ -8,6 +9,7 @@ import {
   type Prefs,
   type TokenBalance,
 } from "../lib/api";
+import { applyRecipientPaste } from "../lib/payment-uri";
 
 @customElement("send-flow")
 export class SendFlow extends LitElement {
@@ -23,6 +25,7 @@ export class SendFlow extends LitElement {
   @state() private error = "";
   @state() private busy = false;
   @state() private saveLabel = "";
+  @state() private scanHint = "";
 
   static styles = css`
     label {
@@ -48,6 +51,9 @@ export class SendFlow extends LitElement {
       display: flex;
       gap: 8px;
       margin-top: 16px;
+    }
+    .row.tight {
+      margin-top: 8px;
     }
     button {
       flex: 1;
@@ -75,6 +81,11 @@ export class SendFlow extends LitElement {
       color: var(--color-accent-muted);
       word-break: break-all;
     }
+    .hint {
+      color: var(--color-text-muted);
+      font-size: var(--font-size-xs);
+      margin-top: 6px;
+    }
     .tiers {
       display: flex;
       gap: 6px;
@@ -87,6 +98,9 @@ export class SendFlow extends LitElement {
     .tiers button.active {
       outline: 2px solid var(--color-accent);
     }
+    input[type="file"] {
+      display: none;
+    }
   `;
 
   async connectedCallback() {
@@ -98,6 +112,82 @@ export class SendFlow extends LitElement {
       this.book = await api.addressBookList();
     } catch {
       /* wallet may still be settling */
+    }
+  }
+
+  private applyParsed(parsed: {
+    address: string;
+    amount?: string;
+    memo?: string;
+  }) {
+    this.recipient = parsed.address;
+    if (parsed.amount) this.amount = parsed.amount;
+    if (parsed.memo) this.memo = parsed.memo;
+    this.scanHint = parsed.amount || parsed.memo
+      ? "Filled from payment URI"
+      : "Address filled";
+  }
+
+  private onRecipientInput(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    // Live-detect drk: URIs as the user pastes
+    if (/^drk:/i.test(v.trim())) {
+      const parsed = applyRecipientPaste(v);
+      if (parsed) {
+        this.applyParsed(parsed);
+        return;
+      }
+    }
+    this.recipient = v;
+  }
+
+  private onRecipientPaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData("text") ?? "";
+    if (!/^drk:/i.test(text.trim())) return;
+    const parsed = applyRecipientPaste(text);
+    if (!parsed) return;
+    e.preventDefault();
+    this.applyParsed(parsed);
+  }
+
+  private async onQrFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    this.error = "";
+    this.scanHint = "Scanning…";
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas unavailable");
+      ctx.drawImage(bitmap, 0, 0);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(img.data, img.width, img.height);
+      if (!code?.data) {
+        this.scanHint = "";
+        this.error = "No QR code found in image";
+        return;
+      }
+      const parsed = applyRecipientPaste(code.data);
+      if (!parsed) {
+        // Raw QR payload that isn't a drk: URI — use as address if plausible
+        if (code.data.trim().length >= 16 && !/\s/.test(code.data.trim())) {
+          this.recipient = code.data.trim();
+          this.scanHint = "Address filled from QR";
+          return;
+        }
+        this.error = "QR did not contain a payment address";
+        this.scanHint = "";
+        return;
+      }
+      this.applyParsed(parsed);
+    } catch (err: any) {
+      this.scanHint = "";
+      this.error = String(err);
     }
   }
 
@@ -132,6 +222,11 @@ export class SendFlow extends LitElement {
     this.result = "";
     this.busy = true;
     try {
+      // Allow pasting a drk: URI into recipient at send time
+      const parsed = applyRecipientPaste(this.recipient);
+      if (parsed && /^drk:/i.test(this.recipient.trim())) {
+        this.applyParsed(parsed);
+      }
       this.result = await api.sendDrk({
         recipient: this.recipient.trim(),
         amount: this.amount.trim(),
@@ -174,13 +269,14 @@ export class SendFlow extends LitElement {
           (c) => html`<option value=${c.address}>${c.label}</option>`,
         )}
       </select>
-      <label>Recipient address</label>
+      <label>Recipient address or <code>drk:</code> URI</label>
       <input
         .value=${this.recipient}
-        @input=${(e: Event) =>
-          (this.recipient = (e.target as HTMLInputElement).value)}
+        placeholder="Paste address or drk:…?amount=&memo="
+        @input=${this.onRecipientInput}
+        @paste=${this.onRecipientPaste}
       />
-      <div class="row">
+      <div class="row tight">
         <input
           placeholder="Save as label"
           .value=${this.saveLabel}
@@ -188,7 +284,21 @@ export class SendFlow extends LitElement {
             (this.saveLabel = (e.target as HTMLInputElement).value)}
         />
         <button class="secondary" @click=${this.saveContact}>Save</button>
+        <button
+          class="secondary"
+          @click=${() =>
+            this.shadowRoot?.querySelector<HTMLInputElement>("#qr-file")?.click()}
+        >
+          Scan QR image
+        </button>
+        <input
+          id="qr-file"
+          type="file"
+          accept="image/*"
+          @change=${this.onQrFile}
+        />
       </div>
+      ${this.scanHint ? html`<p class="hint">${this.scanHint}</p>` : null}
       <label>Token</label>
       <select
         .value=${this.tokenId}

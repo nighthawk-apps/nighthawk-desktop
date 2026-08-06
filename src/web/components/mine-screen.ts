@@ -1,13 +1,32 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { api, type MineStatus } from "../lib/api";
+import { api, type MineStatus, type Prefs } from "../lib/api";
+
+function mineErrorHint(log: string, err: string): string {
+  const blob = `${err}\n${log}`.toLowerCase();
+  if (blob.includes("wallet configuration is invalid")) {
+    return "Stratum rejected the payout address — unlock the wallet and confirm darkfid stratum is on the matching network.";
+  }
+  if (blob.includes("connection refused") || blob.includes("connect")) {
+    return "Cannot reach stratum — start darkfid with stratum enabled (testnet :18347 / mainnet :8347).";
+  }
+  if (blob.includes("failed to start xmrig") || blob.includes("no such file")) {
+    return "xmrig binary missing — run scripts/fetch-xmrig.sh or install xmrig (e.g. Homebrew).";
+  }
+  if (blob.includes("unlock wallet")) {
+    return "Unlock your wallet before mining so payouts go to your deposit address.";
+  }
+  return "";
+}
 
 @customElement("mine-screen")
 export class MineScreen extends LitElement {
   @state() private status: MineStatus | null = null;
   @state() private threads = 12;
   @state() private error = "";
+  @state() private hint = "";
   private timer?: number;
+  private persistTimer?: number;
 
   static styles = css`
     :host {
@@ -70,6 +89,11 @@ export class MineScreen extends LitElement {
     .err {
       color: var(--color-dangerous);
     }
+    .hint {
+      color: var(--color-warning, #e0a84a);
+      font-size: var(--font-size-sm);
+      margin-top: 8px;
+    }
     pre {
       white-space: pre-wrap;
       font-size: 11px;
@@ -81,6 +105,12 @@ export class MineScreen extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    try {
+      const prefs = await api.getPrefs();
+      if (prefs.mineThreads) this.threads = prefs.mineThreads;
+    } catch {
+      /* ignore */
+    }
     await this.refresh();
     this.timer = window.setInterval(() => this.refresh(), 5000);
   }
@@ -88,12 +118,35 @@ export class MineScreen extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this.timer) clearInterval(this.timer);
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+  }
+
+  private onThreadsInput(e: Event) {
+    this.threads = Number((e.target as HTMLInputElement).value);
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = window.setTimeout(() => this.persistThreads(), 400);
+  }
+
+  private async persistThreads() {
+    try {
+      const prefs = await api.getPrefs();
+      (prefs as Prefs).mineThreads = this.threads;
+      await api.setPrefs(prefs);
+    } catch {
+      /* ignore */
+    }
   }
 
   private async refresh() {
     try {
       this.status = await api.mineStatus();
       this.threads = this.status.threads || this.threads;
+      const log = this.status.lastLog || "";
+      if (this.status.running) {
+        this.hint = mineErrorHint(log, "");
+      } else if (log) {
+        this.hint = mineErrorHint(log, this.error);
+      }
       const h =
         this.status.hashrateHs != null
           ? `${(this.status.hashrateHs / 1000).toFixed(1)} kH/s`
@@ -107,16 +160,22 @@ export class MineScreen extends LitElement {
       );
     } catch (e: any) {
       this.error = String(e);
+      this.hint = mineErrorHint(this.status?.lastLog || "", this.error);
     }
   }
 
   private async start() {
     this.error = "";
+    this.hint = "";
     try {
+      await this.persistThreads();
       await api.mineStart(this.threads);
       await this.refresh();
+      // Surface stratum rejection quickly from the first log lines
+      setTimeout(() => this.refresh(), 2500);
     } catch (e: any) {
       this.error = String(e);
+      this.hint = mineErrorHint(this.status?.lastLog || "", this.error);
     }
   }
 
@@ -127,7 +186,8 @@ export class MineScreen extends LitElement {
 
   render() {
     const s = this.status;
-    const hs = s?.hashrateHs != null ? `${(s.hashrateHs / 1000).toFixed(2)} kH/s` : "—";
+    const hs =
+      s?.hashrateHs != null ? `${(s.hashrateHs / 1000).toFixed(2)} kH/s` : "—";
     return html`
       <div class="hero">Mine DRK</div>
       <p class="sub">
@@ -135,16 +195,17 @@ export class MineScreen extends LitElement {
         Requires darkfid with stratum enabled (testnet :18347 / mainnet :8347).
       </p>
       <div class="card">
-        <div>Status: <strong>${s?.running ? "Running" : "Stopped"}</strong></div>
+        <div>
+          Status: <strong>${s?.running ? "Running" : "Stopped"}</strong>
+        </div>
         <div>Hashrate: ${hs}</div>
-        <label>Threads: ${this.threads}</label>
+        <label>Threads: ${this.threads} (saved to prefs)</label>
         <input
           type="range"
           min="1"
           max="14"
           .value=${String(this.threads)}
-          @input=${(e: Event) =>
-            (this.threads = Number((e.target as HTMLInputElement).value))}
+          @input=${this.onThreadsInput}
         />
         <label>Stratum</label>
         <div class="addr">${s?.stratumUrl || "—"}</div>
@@ -154,6 +215,7 @@ export class MineScreen extends LitElement {
           <button class="start" @click=${this.start}>Start mining</button>
           <button class="stop" @click=${this.stop}>Stop</button>
         </div>
+        ${this.hint ? html`<p class="hint">${this.hint}</p>` : null}
       </div>
       ${s?.lastLog ? html`<div class="card"><pre>${s.lastLog}</pre></div>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

@@ -1,8 +1,7 @@
-//! PIN-sealed local vault (no macOS Keychain prompts).
+//! Local vault without a user PIN lock.
 //!
-//! Secrets live in `vault.dat` (AES-256-GCM), unlocked with the user PIN via PBKDF2.
-//! A small `vault.meta.json` holds salt + PIN hash for existence / verify without
-//! decrypting. Optional one-time migration from the old multi-item keyring layout.
+//! Secrets live in `vault.dat` (AES-256-GCM) under a desktop-local key. The app
+//! opens the wallet automatically on launch — no unlock screen.
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -19,27 +18,18 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-const PBKDF2_ITERS: u32 = 600_000;
-const META_VERSION: u32 = 1;
-const MIN_PIN_LEN: usize = 6;
-
-/// Reject trivially weak PINs (too short or all identical digits).
-fn validate_pin_strength(pin: &str) -> Result<()> {
-    if pin.len() < MIN_PIN_LEN {
-        return Err(anyhow!("PIN must be at least {MIN_PIN_LEN} digits"));
-    }
-    let chars: Vec<char> = pin.chars().collect();
-    if !chars.is_empty() && chars.iter().all(|c| *c == chars[0]) {
-        return Err(anyhow!("PIN cannot be all the same digit"));
-    }
-    Ok(())
-}
+/// Bumped when PIN-sealed vaults were retired. Older metas are wiped on sight.
+const META_VERSION: u32 = 2;
+const PBKDF2_ITERS: u32 = 100_000;
+/// Not a user secret — seals the vault on disk so a casual file copy is opaque.
+const DESKTOP_VAULT_SECRET: &str = "nighthawk-desktop-local-vault-v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VaultMeta {
     version: u32,
     salt_hex: String,
-    pin_hash: String,
+    /// Hex of derived key (integrity check).
+    key_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,16 +65,10 @@ fn ensure_vault_dir() -> Result<()> {
     fs::create_dir_all(vault_dir()).context("create app data dir")
 }
 
-fn derive_key(pin: &str, salt: &[u8]) -> [u8; 32] {
+fn derive_key(salt: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(pin.as_bytes(), salt, PBKDF2_ITERS, &mut out);
+    pbkdf2_hmac::<Sha256>(DESKTOP_VAULT_SECRET.as_bytes(), salt, PBKDF2_ITERS, &mut out);
     out
-}
-
-fn hash_pin(pin: &str, salt: &[u8]) -> String {
-    let mut out = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(pin.as_bytes(), salt, PBKDF2_ITERS, &mut out);
-    hex::encode(out)
 }
 
 fn seal(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -110,10 +94,10 @@ fn open_seal(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher
         .decrypt(nonce, ct)
-        .map_err(|_| anyhow!("Invalid PIN or corrupt vault"))
+        .map_err(|_| anyhow!("Corrupt vault"))
 }
 
-fn read_meta() -> Result<Option<VaultMeta>> {
+fn read_meta_raw() -> Result<Option<serde_json::Value>> {
     let path = meta_path();
     if !path.exists() {
         return Ok(None);
@@ -122,17 +106,31 @@ fn read_meta() -> Result<Option<VaultMeta>> {
     Ok(Some(serde_json::from_str(&s).context("parse vault meta")?))
 }
 
+fn read_meta() -> Result<Option<VaultMeta>> {
+    let Some(raw) = read_meta_raw()? else {
+        return Ok(None);
+    };
+    let version = raw.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    if version != META_VERSION {
+        // PIN-era (v1) or unknown — drop so the user re-creates without unlock.
+        let _ = fs::remove_file(meta_path());
+        let _ = fs::remove_file(data_path());
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_value(raw).context("parse vault meta")?))
+}
+
 fn write_meta(meta: &VaultMeta) -> Result<()> {
     ensure_vault_dir()?;
     let s = serde_json::to_string_pretty(meta)?;
     fs::write(meta_path(), s).context("write vault meta")
 }
 
-fn write_vault_files(pin: &str, mnemonic: &[String], wallet_pass: &str) -> Result<()> {
+fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
     ensure_vault_dir()?;
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
-    let key = derive_key(pin, &salt);
+    let key = derive_key(&salt);
     let payload = VaultPayload {
         mnemonic: mnemonic.join(" "),
         wallet_pass: wallet_pass.to_string(),
@@ -143,19 +141,19 @@ fn write_vault_files(pin: &str, mnemonic: &[String], wallet_pass: &str) -> Resul
     write_meta(&VaultMeta {
         version: META_VERSION,
         salt_hex: hex::encode(salt),
-        pin_hash: hash_pin(pin, &salt),
+        key_hash: hex::encode(key),
     })?;
     Ok(())
 }
 
-fn decrypt_payload(pin: &str) -> Result<VaultPayload> {
+fn decrypt_payload() -> Result<VaultPayload> {
     let meta = read_meta()?.ok_or_else(|| anyhow!("No wallet on this device"))?;
     let salt = hex::decode(&meta.salt_hex).context("bad salt")?;
-    if hash_pin(pin, &salt) != meta.pin_hash {
-        return Err(anyhow!("Invalid PIN"));
+    let key = derive_key(&salt);
+    if hex::encode(key) != meta.key_hash {
+        return Err(anyhow!("Corrupt vault"));
     }
     let blob = fs::read(data_path()).context("read vault.dat")?;
-    let key = derive_key(pin, &salt);
     let plain = open_seal(&key, &blob)?;
     serde_json::from_slice(&plain).context("parse vault payload")
 }
@@ -164,8 +162,8 @@ fn lock_session() {
     *session().lock() = None;
 }
 
-fn unlock_into_session(pin: &str) -> Result<()> {
-    let payload = decrypt_payload(pin)?;
+fn unlock_into_session() -> Result<()> {
+    let payload = decrypt_payload()?;
     *session().lock() = Some(Session {
         mnemonic: payload
             .mnemonic
@@ -177,64 +175,18 @@ fn unlock_into_session(pin: &str) -> Result<()> {
     Ok(())
 }
 
-// --- Legacy keyring migration (one-time; then keyring is unused) ---
+// --- Legacy keyring cleanup (no migration; PIN path is gone) ---
 
 const LEGACY_SERVICE: &str = "com.nighthawkapps.desktop";
-const LEGACY_PASS: &str = "wallet_pass";
-const LEGACY_SEED: &str = "seed_mnemonic";
-const LEGACY_PIN: &str = "pin_hash";
-const LEGACY_NETWORK: &str = "active_network";
+const LEGACY_KEYS: [&str; 4] = ["wallet_pass", "seed_mnemonic", "pin_hash", "active_network"];
 
-fn legacy_get(key: &str) -> Result<Option<String>> {
-    match keyring::Entry::new(LEGACY_SERVICE, key)?.get_password() {
-        Ok(v) => Ok(Some(v)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.into()),
+fn legacy_delete_all() {
+    for key in LEGACY_KEYS {
+        if let Ok(e) = keyring::Entry::new(LEGACY_SERVICE, key) {
+            let _ = e.delete_credential();
+        }
     }
 }
-
-fn legacy_delete(key: &str) {
-    if let Ok(e) = keyring::Entry::new(LEGACY_SERVICE, key) {
-        let _ = e.delete_credential();
-    }
-}
-
-fn legacy_verify_pin(pin: &str) -> Result<bool> {
-    let Some(payload) = legacy_get(LEGACY_PIN)? else {
-        return Ok(false);
-    };
-    let (salt_hex, hash) = payload
-        .split_once(':')
-        .ok_or_else(|| anyhow!("corrupt legacy pin"))?;
-    let salt = hex::decode(salt_hex)?;
-    Ok(hash_pin(pin, &salt) == hash)
-}
-
-/// If old Keychain secrets exist and no file vault yet, migrate after PIN check.
-fn migrate_legacy_if_needed(pin: &str) -> Result<bool> {
-    if meta_path().exists() && data_path().exists() {
-        return Ok(false);
-    }
-    if legacy_get(LEGACY_SEED)?.is_none() {
-        return Ok(false);
-    }
-    if !legacy_verify_pin(pin)? {
-        return Err(anyhow!("Invalid PIN"));
-    }
-    let mnemonic = legacy_get(LEGACY_SEED)?
-        .ok_or_else(|| anyhow!("legacy seed missing"))?
-        .split_whitespace()
-        .map(|w| w.to_string())
-        .collect::<Vec<_>>();
-    let wallet_pass = legacy_get(LEGACY_PASS)?.ok_or_else(|| anyhow!("legacy pass missing"))?;
-    write_vault_files(pin, &mnemonic, &wallet_pass)?;
-    for k in [LEGACY_PASS, LEGACY_SEED, LEGACY_PIN, LEGACY_NETWORK] {
-        legacy_delete(k);
-    }
-    Ok(true)
-}
-
-// --- Public API (keeps command glue simple) ---
 
 /// Random 32-byte wallet pass (SQLCipher), Base64 — same pattern as mobile.
 pub fn generate_wallet_pass() -> String {
@@ -244,9 +196,8 @@ pub fn generate_wallet_pass() -> String {
 }
 
 /// Persist a new wallet vault (create / restore). Replaces any existing vault.
-pub fn create_vault(mnemonic: &[String], wallet_pass: &str, pin: &str) -> Result<()> {
-    validate_pin_strength(pin)?;
-    write_vault_files(pin, mnemonic, wallet_pass)?;
+pub fn create_vault(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
+    write_vault_files(mnemonic, wallet_pass)?;
     *session().lock() = Some(Session {
         mnemonic: mnemonic.to_vec(),
         wallet_pass: wallet_pass.to_string(),
@@ -254,67 +205,29 @@ pub fn create_vault(mnemonic: &[String], wallet_pass: &str, pin: &str) -> Result
     Ok(())
 }
 
+/// True when the active profile has a current (PIN-less) vault.
 pub fn wallet_exists() -> bool {
-    if vault_ready() {
-        return true;
-    }
-    // Prior install with on-disk wallet — do NOT touch Keychain here.
-    // A Keychain read on launch blocks the main thread behind a permission
-    // dialog and leaves a blank/"Starting…" screen.
-    wallet_db_present()
+    vault_ready()
 }
 
 pub fn has_pin() -> Result<bool> {
-    if read_meta()?.is_some() {
-        return Ok(true);
-    }
-    Ok(wallet_db_present())
+    // Kept for AppStatusDto compatibility — always false (no user PIN).
+    Ok(false)
 }
 
-fn vault_ready() -> bool {
-    meta_path().exists() && data_path().exists()
+pub fn vault_ready() -> bool {
+    match read_meta() {
+        Ok(Some(_)) => data_path().exists(),
+        _ => false,
+    }
 }
 
-fn wallet_db_present() -> bool {
-    let root = crate::paths::wallet_data_root();
-    for net in ["testnet", "mainnet"] {
-        if root.join(net).join("wallet.db").exists() {
-            return true;
-        }
+/// Load secrets into the in-memory session (no user PIN).
+pub fn unlock_session() -> Result<()> {
+    if !vault_ready() {
+        return Err(anyhow!("No wallet on this device — create or restore first"));
     }
-    // Legacy / other profiles under app root
-    let app = crate::paths::app_root();
-    for net in ["testnet", "mainnet"] {
-        if app.join(net).join("wallet.db").exists() {
-            return true;
-        }
-    }
-    if let Ok(entries) = fs::read_dir(app.join("wallets")) {
-        for e in entries.flatten() {
-            for net in ["testnet", "mainnet"] {
-                if e.path().join(net).join("wallet.db").exists() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-pub fn verify_pin(pin: &str) -> Result<bool> {
-    if let Some(meta) = read_meta()? {
-        let salt = hex::decode(&meta.salt_hex)?;
-        return Ok(hash_pin(pin, &salt) == meta.pin_hash);
-    }
-    legacy_verify_pin(pin)
-}
-
-/// Unlock secrets into the in-memory session (call after PIN OK).
-pub fn unlock_session(pin: &str) -> Result<()> {
-    if migrate_legacy_if_needed(pin)? {
-        // migrated + files written; fall through to unlock
-    }
-    unlock_into_session(pin)
+    unlock_into_session()
 }
 
 pub fn clear_session() {
@@ -326,7 +239,7 @@ pub fn load_mnemonic() -> Result<Vec<String>> {
         .lock()
         .as_ref()
         .map(|s| s.mnemonic.clone())
-        .ok_or_else(|| anyhow!("Wallet locked"))
+        .ok_or_else(|| anyhow!("Wallet not open"))
 }
 
 pub fn load_wallet_pass() -> Result<String> {
@@ -334,35 +247,14 @@ pub fn load_wallet_pass() -> Result<String> {
         .lock()
         .as_ref()
         .map(|s| s.wallet_pass.clone())
-        .ok_or_else(|| anyhow!("Wallet locked"))
+        .ok_or_else(|| anyhow!("Wallet not open"))
 }
 
-/// Re-seal vault with a new PIN (session must already be unlocked).
-pub fn set_pin(old_pin: &str, new_pin: &str) -> Result<()> {
-    validate_pin_strength(new_pin)?;
-    if !verify_pin(old_pin)? {
-        return Err(anyhow!("Invalid PIN"));
-    }
-    // Ensure session has secrets (unlock if needed).
+/// Return mnemonic (opens vault session if needed).
+pub fn backup_mnemonic() -> Result<Vec<String>> {
     if session().lock().is_none() {
-        unlock_into_session(old_pin)?;
+        unlock_session()?;
     }
-    let (mnemonic, wallet_pass) = {
-        let g = session().lock();
-        let s = g.as_ref().ok_or_else(|| anyhow!("Wallet locked"))?;
-        (s.mnemonic.clone(), s.wallet_pass.clone())
-    };
-    write_vault_files(new_pin, &mnemonic, &wallet_pass)?;
-    *session().lock() = Some(Session {
-        mnemonic,
-        wallet_pass,
-    });
-    Ok(())
-}
-
-/// Unlock with PIN and return mnemonic (settings backup).
-pub fn backup_mnemonic(pin: &str) -> Result<Vec<String>> {
-    unlock_session(pin)?;
     load_mnemonic()
 }
 
@@ -370,8 +262,6 @@ pub fn wipe_secrets() -> Result<()> {
     lock_session();
     let _ = fs::remove_file(meta_path());
     let _ = fs::remove_file(data_path());
-    for k in [LEGACY_PASS, LEGACY_SEED, LEGACY_PIN, LEGACY_NETWORK] {
-        legacy_delete(k);
-    }
+    legacy_delete_all();
     Ok(())
 }

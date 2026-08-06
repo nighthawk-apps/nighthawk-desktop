@@ -14,6 +14,23 @@ function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(cmd, cleaned);
 }
 
+/** Tauri rejects with string | Error | { message } — never show "[object Object]". */
+export function formatInvokeError(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message || String(e);
+  if (e && typeof e === "object") {
+    const rec = e as Record<string, unknown>;
+    if (typeof rec.message === "string") return rec.message;
+    if (typeof rec.error === "string") return rec.error;
+    try {
+      return JSON.stringify(e);
+    } catch {
+      /* fall through */
+    }
+  }
+  return String(e);
+}
+
 export interface Prefs {
   network: Network;
   lightwalletUrl: string;
@@ -158,33 +175,29 @@ export const api = {
   createWallet: (args: {
     mnemonic: string[];
     network: Network;
-    pin: string;
     birthdayHeight: number;
     lightwalletUrl?: string;
   }) =>
     invokeCmd<void>("create_wallet", {
       mnemonic: args.mnemonic,
       network: args.network,
-      pin: args.pin,
       birthdayHeight: args.birthdayHeight,
       lightwalletUrl: args.lightwalletUrl ?? null,
     }),
   restoreWallet: (args: {
     mnemonic: string[];
     network: Network;
-    pin: string;
     birthdayHeight: number;
     lightwalletUrl?: string;
   }) =>
     invokeCmd<void>("restore_wallet", {
       mnemonic: args.mnemonic,
       network: args.network,
-      pin: args.pin,
       birthdayHeight: args.birthdayHeight,
       lightwalletUrl: args.lightwalletUrl ?? null,
     }),
-  unlockWallet: (pin: string) => invokeCmd<void>("unlock_wallet", { pin }),
-  lockWallet: () => invokeCmd<void>("lock_wallet"),
+  /** Open existing vault (no PIN). */
+  openWallet: () => invokeCmd<void>("open_wallet"),
 
   walletBalance: () => invokeCmd<number>("wallet_balance"),
   walletAddress: () => invokeCmd<string>("wallet_address"),
@@ -287,10 +300,6 @@ export const api = {
 
   setNetwork: (network: Network) => invokeCmd<void>("set_network", { network }),
   setLwdUrl: (url: string) => invokeCmd<void>("set_lwd_url", { url }),
-  backupMnemonic: (pin: string) =>
-    invokeCmd<string[]>("backup_mnemonic", { pin }),
-  wipeWallet: (pin: string) => invokeCmd<void>("wipe_wallet", { pin }),
-  verifyPin: (pin: string) => invokeCmd<boolean>("verify_pin", { pin }),
-  setPin: (oldPin: string, newPin: string) =>
-    invokeCmd<void>("set_pin", { oldPin, newPin }),
+  backupMnemonic: () => invokeCmd<string[]>("backup_mnemonic"),
+  wipeWallet: () => invokeCmd<void>("wipe_wallet"),
 };

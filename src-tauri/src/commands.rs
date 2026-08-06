@@ -237,7 +237,6 @@ fn persist_and_open(
     state: &AppState,
     mnemonic: Vec<String>,
     network: Network,
-    pin: String,
     birthday_height: i64,
     lightwallet_url: Option<String>,
 ) -> Result<(), String> {
@@ -252,14 +251,20 @@ fn persist_and_open(
     }
     prefs.stratum_url = network.default_stratum().to_string();
     let wallet_pass = secure_store::generate_wallet_pass();
-    secure_store::create_vault(&mnemonic, &wallet_pass, &pin).map_err(map_err)?;
+    secure_store::create_vault(&mnemonic, &wallet_pass).map_err(map_err)?;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs.clone();
     *state.network.lock() = network;
     let _ = wallets::bootstrap_from_prefs();
 
     let cfg = build_bootstrap(mnemonic, network, wallet_pass, &prefs)?;
-    let handle = open_handle(cfg)?;
+    let handle = match open_handle(cfg) {
+        Ok(h) => h,
+        Err(e) => {
+            secure_store::clear_session();
+            return Err(e);
+        }
+    };
     attach_reorg_callback(app, &handle);
     *state.wallet.lock() = Some(handle);
     Ok(())
@@ -271,7 +276,6 @@ pub fn create_wallet(
     state: State<'_, AppState>,
     mnemonic: Vec<String>,
     network: String,
-    pin: String,
     birthday_height: i64,
     lightwallet_url: Option<String>,
 ) -> Result<(), String> {
@@ -281,7 +285,6 @@ pub fn create_wallet(
         &state,
         mnemonic,
         network,
-        pin,
         birthday_height,
         lightwallet_url,
     )
@@ -293,7 +296,6 @@ pub fn restore_wallet(
     state: State<'_, AppState>,
     mnemonic: Vec<String>,
     network: String,
-    pin: String,
     birthday_height: i64,
     lightwallet_url: Option<String>,
 ) -> Result<(), String> {
@@ -303,38 +305,40 @@ pub fn restore_wallet(
         &state,
         mnemonic,
         network,
-        pin,
         birthday_height,
         lightwallet_url,
     )
 }
 
+/// Open an existing vault (no PIN). Called automatically on app start.
 #[tauri::command]
-pub fn unlock_wallet(
+pub async fn open_wallet(
     app: AppHandle,
     state: State<'_, AppState>,
-    pin: String,
 ) -> Result<(), String> {
     let _ = wallets::bootstrap_from_prefs();
-    if !secure_store::verify_pin(&pin).map_err(map_err)? {
-        return Err("Invalid PIN".into());
+    if state.wallet.lock().is_some() {
+        return Ok(());
     }
-    secure_store::unlock_session(&pin).map_err(map_err)?;
-    let mnemonic = secure_store::load_mnemonic().map_err(map_err)?;
-    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+
+    let (mnemonic, wallet_pass) = tauri::async_runtime::spawn_blocking(move || {
+        secure_store::unlock_session().map_err(map_err)?;
+        let mnemonic = secure_store::load_mnemonic().map_err(map_err)?;
+        let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+        Ok::<_, String>((mnemonic, wallet_pass))
+    })
+    .await
+    .map_err(|e| format!("Open interrupted: {e}"))??;
+
     let prefs = state.prefs.lock().clone();
     let network = prefs.network;
     let cfg = build_bootstrap(mnemonic, network, wallet_pass, &prefs)?;
-    let handle = open_handle(cfg)?;
+    let handle = tauri::async_runtime::spawn_blocking(move || open_handle(cfg))
+        .await
+        .map_err(|e| format!("Wallet open interrupted: {e}"))??;
     attach_reorg_callback(&app, &handle);
     *state.wallet.lock() = Some(handle);
     Ok(())
-}
-
-#[tauri::command]
-pub fn lock_wallet(state: State<'_, AppState>) {
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
 }
 
 fn with_wallet<T>(
@@ -1152,15 +1156,12 @@ fn validate_lwd_url(url: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn backup_mnemonic(pin: String) -> Result<Vec<String>, String> {
-    secure_store::backup_mnemonic(&pin).map_err(map_err)
+pub fn backup_mnemonic() -> Result<Vec<String>, String> {
+    secure_store::backup_mnemonic().map_err(map_err)
 }
 
 #[tauri::command]
-pub fn wipe_wallet(state: State<'_, AppState>, pin: String) -> Result<(), String> {
-    if !secure_store::verify_pin(&pin).map_err(map_err)? {
-        return Err("Invalid PIN".into());
-    }
+pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     {
         let mut miner = state.miner.lock();
         if let Some(mut m) = miner.take() {
@@ -1173,22 +1174,11 @@ pub fn wipe_wallet(state: State<'_, AppState>, pin: String) -> Result<(), String
     let network = *state.network.lock();
     let dir = crate::paths::wallet_data_root();
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(network));
-    // Wipe vault for active profile only
     let _ = std::fs::remove_file(dir.join("vault.dat"));
     let _ = std::fs::remove_file(dir.join("vault.meta.json"));
     crate::dm_store::clear();
     secure_store::wipe_secrets().map_err(map_err)?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn verify_pin(pin: String) -> Result<bool, String> {
-    secure_store::verify_pin(&pin).map_err(map_err)
-}
-
-#[tauri::command]
-pub fn set_pin(old_pin: String, new_pin: String) -> Result<(), String> {
-    secure_store::set_pin(&old_pin, &new_pin).map_err(map_err)
 }
 
 pub fn initial_prefs() -> Prefs {
