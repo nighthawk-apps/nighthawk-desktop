@@ -44,6 +44,8 @@ export interface Prefs {
   lightwalletTlsPinSha256: string | null;
   feeTier: FeeTier;
   activeWalletId: string;
+  /** UnifOMR-only sync (no trial-decrypt fallback). Default false. */
+  strictOmrOnly: boolean;
 }
 
 /** Normalize fee tier from prefs (camelCase feeTier). */

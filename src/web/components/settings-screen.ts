@@ -110,6 +110,9 @@ export class SettingsScreen extends LitElement {
   async connectedCallback() {
     super.connectedCallback();
     this.prefs = await api.getPrefs();
+    if (this.prefs && this.prefs.strictOmrOnly === undefined) {
+      this.prefs.strictOmrOnly = false;
+    }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
     try {
@@ -359,6 +362,22 @@ export class SettingsScreen extends LitElement {
           />
           Use Tor for chat / LWD when supported
         </label>
+        <label>
+          <input
+            type="checkbox"
+            .checked=${p.strictOmrOnly}
+            @change=${(e: Event) => {
+              p.strictOmrOnly = (e.target as HTMLInputElement).checked;
+              this.requestUpdate();
+            }}
+          />
+          Strict UnifOMR sync (no trial-decrypt fallback)
+        </label>
+        <p class="msg">
+          Off by default so you can receive from non-UnifOMR wallets (e.g.
+          <code>drk</code>). When on, only payments with UnifOMR clues are discovered —
+          faster and more private, but <code>drk</code> sends may not appear.
+        </p>
         <div class="row">
           <button @click=${this.save}>Save</button>
           <button class="secondary" @click=${this.toggleArti}>

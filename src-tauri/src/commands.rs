@@ -188,6 +188,7 @@ fn build_bootstrap(
         use_tor: prefs.use_tor,
         tor_socks_port: prefs.tor_socks_port,
         darkfid_rpc_url: prefs.darkfid_rpc_url.clone(),
+        strict_omr_only: prefs.strict_omr_only,
     })
 }
 
@@ -218,6 +219,9 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
 pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String> {
     save_prefs(&prefs).map_err(map_err)?;
     *state.network.lock() = prefs.network;
+    if let Some(handle) = state.wallet.lock().as_ref() {
+        handle.set_strict_omr_only(prefs.strict_omr_only);
+    }
     *state.prefs.lock() = prefs;
     Ok(())
 }

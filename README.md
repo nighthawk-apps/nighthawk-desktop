@@ -9,6 +9,7 @@ Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](h
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book, fee tiers
 - Bundled **xmrig** mining to your deposit address via local darkfid stratum
+- **Trial-decrypt fallback (default on):** receives payments from non-UnifOMR wallets (e.g. upstream `drk`) by trial-decrypting compact blocks when UnifOMR finds no matches. Toggle **Strict UnifOMR sync** in Settings to make sync UnifOMR-only (more private / faster when counterparties also use UnifOMR).
 - UnifOMR Param2 limits: [`docs/unifomr_mvp_limits.md`](docs/unifomr_mvp_limits.md)
 
 ## Prerequisites

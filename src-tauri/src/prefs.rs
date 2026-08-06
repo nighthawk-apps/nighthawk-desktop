@@ -36,6 +36,14 @@ pub struct Prefs {
     /// Active multi-wallet profile id (`default` = legacy app-root layout).
     #[serde(default = "default_wallet_id", alias = "active_wallet_id")]
     pub active_wallet_id: String,
+    /// When true, UnifOMR-only sync (no supplemental/gap trial decrypt).
+    /// Default false so Nighthawk can receive from non-UnifOMR wallets (e.g. `drk`).
+    #[serde(default = "default_strict_omr_only", alias = "strict_omr_only")]
+    pub strict_omr_only: bool,
+}
+
+fn default_strict_omr_only() -> bool {
+    false
 }
 
 fn default_fee_tier() -> String {
@@ -63,6 +71,7 @@ impl Default for Prefs {
             lightwallet_tls_pin_sha256: network.default_lwd_tls_pin().map(str::to_string),
             fee_tier: default_fee_tier(),
             active_wallet_id: default_wallet_id(),
+            strict_omr_only: default_strict_omr_only(),
         }
     }
 }
