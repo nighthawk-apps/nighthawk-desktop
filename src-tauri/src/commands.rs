@@ -147,14 +147,6 @@ fn attach_reorg_callback(app: &AppHandle, handle: &DarkfiWalletHandle) {
     handle.set_reorg_callback(Some(cb));
 }
 
-fn fee_tier_multiplier(tier: &str) -> f64 {
-    match tier.to_ascii_lowercase().as_str() {
-        "economy" => 0.85,
-        "priority" => 1.25,
-        _ => 1.0,
-    }
-}
-
 fn build_bootstrap(
     mnemonic: Vec<String>,
     network: Network,
@@ -217,9 +209,19 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
 
 #[tauri::command]
 pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String> {
+    let old = state.prefs.lock().clone();
+    let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
+        || old.use_tor != prefs.use_tor
+        || old.tor_socks_port != prefs.tor_socks_port
+        || old.lightwallet_tls_pin_sha256 != prefs.lightwallet_tls_pin_sha256
+        || old.network != prefs.network;
     save_prefs(&prefs).map_err(map_err)?;
     *state.network.lock() = prefs.network;
-    if let Some(handle) = state.wallet.lock().as_ref() {
+    if needs_wallet_reopen {
+        // LWD / Tor / TLS pin only apply at bootstrap — drop the open handle.
+        *state.wallet.lock() = None;
+        secure_store::clear_session();
+    } else if let Some(handle) = state.wallet.lock().as_ref() {
         handle.set_strict_omr_only(prefs.strict_omr_only);
     }
     *state.prefs.lock() = prefs;
@@ -440,13 +442,11 @@ pub fn estimate_fee(
     memo: Option<String>,
     token_id: Option<String>,
 ) -> Result<i64, String> {
-    let tier = state.prefs.lock().fee_tier.clone();
-    let base = with_wallet(&state, |w| {
+    // Fee tiers are not applied on build/broadcast yet — return the fee send uses.
+    with_wallet(&state, |w| {
         w.estimate_transfer_fee(recipient, amount, token_id, memo)
             .map_err(ffi_err)
-    })?;
-    let scaled = (base as f64 * fee_tier_multiplier(&tier)).round() as i64;
-    Ok(scaled.max(0))
+    })
 }
 
 #[tauri::command]
@@ -1111,6 +1111,8 @@ pub fn set_network(state: State<'_, AppState>, network: String) -> Result<(), St
     let mut prefs = state.prefs.lock().clone();
     prefs.network = network;
     prefs.stratum_url = network.default_stratum().to_string();
+    prefs.lightwallet_url = network.default_lwd().to_string();
+    prefs.lightwallet_tls_pin_sha256 = network.default_lwd_tls_pin().map(str::to_string);
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs;
     *state.network.lock() = network;
@@ -1126,6 +1128,8 @@ pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String
     prefs.lightwallet_url = url;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs;
+    *state.wallet.lock() = None;
+    secure_store::clear_session();
     Ok(())
 }
 

@@ -2,10 +2,8 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import {
   api,
-  prefsFeeTier,
   type DaoProposalSummary,
   type DaoSummary,
-  type FeeTier,
   type Network,
   type Prefs,
   type WalletProfiles,
@@ -284,7 +282,6 @@ export class SettingsScreen extends LitElement {
   render() {
     const p = this.prefs;
     if (!p) return html`<p>Loading…</p>`;
-    const tier = prefsFeeTier(p);
     return html`
       <div class="card">
         <h3>Network</h3>
@@ -330,18 +327,6 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>Fee preference</label>
-        <select
-          .value=${tier}
-          @change=${(e: Event) => {
-            p.feeTier = (e.target as HTMLSelectElement).value as FeeTier;
-            this.requestUpdate();
-          }}
-        >
-          <option value="economy">Economy</option>
-          <option value="normal">Normal</option>
-          <option value="priority">Priority</option>
-        </select>
         <label>Tor SOCKS port</label>
         <input
           type="number"
@@ -529,7 +514,11 @@ export class SettingsScreen extends LitElement {
 
       <div class="card">
         <h3>Security</h3>
-        <p>No app PIN — this desktop build opens the wallet automatically.</p>
+        <p>
+          No app PIN — this desktop build opens the wallet automatically. Seed
+          material is sealed with a desktop-local key (not a user secret); treat
+          the app data directory as sensitive.
+        </p>
         <button @click=${this.doBackup}>Show seed backup</button>
         <button class="danger" @click=${this.wipe}>Wipe wallet</button>
         ${this.backup.length

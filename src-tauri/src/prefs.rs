@@ -63,7 +63,7 @@ impl Default for Prefs {
             darkfid_rpc_url: None,
             stratum_url: network.default_stratum().to_string(),
             // Direct to Studio ngrok for testnet; enable Tor in settings if desired.
-            use_tor: false,
+            use_tor: true,
             tor_socks_port: 9150,
             mine_threads: 12,
             chat_nick: "nighthawk".to_string(),

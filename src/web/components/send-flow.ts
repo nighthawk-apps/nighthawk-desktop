@@ -3,10 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import jsQR from "jsqr";
 import {
   api,
-  prefsFeeTier,
   type AddressBookEntry,
-  type FeeTier,
-  type Prefs,
   type TokenBalance,
 } from "../lib/api";
 import { applyRecipientPaste } from "../lib/payment-uri";
@@ -19,7 +16,6 @@ export class SendFlow extends LitElement {
   @state() private tokenId = "";
   @state() private tokens: TokenBalance[] = [];
   @state() private book: AddressBookEntry[] = [];
-  @state() private feeTier: FeeTier = "normal";
   @state() private fee: number | null = null;
   @state() private result = "";
   @state() private error = "";
@@ -106,8 +102,6 @@ export class SendFlow extends LitElement {
   async connectedCallback() {
     super.connectedCallback();
     try {
-      const prefs = await api.getPrefs();
-      this.feeTier = prefsFeeTier(prefs);
       this.tokens = await api.listTokenBalances();
       this.book = await api.addressBookList();
     } catch {
@@ -188,18 +182,6 @@ export class SendFlow extends LitElement {
     } catch (err: any) {
       this.scanHint = "";
       this.error = String(err);
-    }
-  }
-
-  private async setTier(tier: FeeTier) {
-    this.feeTier = tier;
-    try {
-      const prefs = await api.getPrefs();
-      (prefs as Prefs).feeTier = tier;
-      await api.setPrefs(prefs);
-      if (this.fee !== null) await this.estimate();
-    } catch (e: any) {
-      this.error = String(e);
     }
   }
 
@@ -321,19 +303,6 @@ export class SendFlow extends LitElement {
         @input=${(e: Event) =>
           (this.amount = (e.target as HTMLInputElement).value)}
       />
-      <label>Fee preference</label>
-      <div class="tiers">
-        ${(["economy", "normal", "priority"] as FeeTier[]).map(
-          (t) => html`
-            <button
-              class=${this.feeTier === t ? "active" : ""}
-              @click=${() => this.setTier(t)}
-            >
-              ${t}
-            </button>
-          `,
-        )}
-      </div>
       <label>Memo (optional)</label>
       <textarea
         rows="2"
@@ -343,7 +312,7 @@ export class SendFlow extends LitElement {
       ></textarea>
       ${this.fee !== null
         ? html`<p class="msg">
-            Estimated fee (${this.feeTier}): ${(this.fee / 1e8).toFixed(8)} DRK
+            Estimated fee: ${(this.fee / 1e8).toFixed(8)} DRK
           </p>`
         : null}
       <div class="row">
