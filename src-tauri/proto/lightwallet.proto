@@ -239,6 +239,8 @@ message LightInfo {
   bytes best_block_hash = 7;
   // Backing node version string
   string backend_version = 8;
+  // 32-byte Schnorr public key for GetCluePublicKey directory attestations.
+  bytes directory_attest_pubkey = 9;
 }
 
 // === OMR Messages ===
