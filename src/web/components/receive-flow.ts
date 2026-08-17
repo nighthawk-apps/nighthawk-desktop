@@ -7,6 +7,8 @@ import { api } from "../lib/api";
 export class ReceiveFlow extends LitElement {
   @state() private address = "";
   @state() private qr = "";
+  @state() private copied = false;
+  @state() private error = "";
 
   static styles = css`
     .card {
@@ -38,31 +40,61 @@ export class ReceiveFlow extends LitElement {
       cursor: pointer;
       font-family: inherit;
       margin-right: 8px;
+      transition: background-color var(--transition-fast, 0.2s);
+    }
+    button.secondary {
+      background: var(--color-secondary-fill);
+      color: var(--color-text-header);
+      border: 1px solid var(--color-steel-border);
+    }
+    .err {
+      color: var(--color-dangerous);
+      font-size: var(--font-size-sm);
+      margin-top: 8px;
     }
   `;
 
   async connectedCallback() {
     super.connectedCallback();
-    this.address = await api.walletAddress();
-    this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
+    try {
+      this.address = await api.walletAddress();
+      this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
+    } catch (e: unknown) {
+      this.error = String(e);
+    }
+  }
+
+  private copyAddress() {
+    if (!this.address) return;
+    navigator.clipboard.writeText(this.address);
+    this.copied = true;
+    setTimeout(() => {
+      this.copied = false;
+    }, 2000);
   }
 
   private async newAddr() {
-    this.address = await api.generateAddress();
-    this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
+    this.error = "";
+    try {
+      this.address = await api.generateAddress();
+      this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
+    } catch (e: unknown) {
+      this.error = String(e);
+    }
   }
 
   render() {
     return html`
       <div class="card">
-        <div class="addr">${this.address}</div>
-        ${this.qr ? html`<img src=${this.qr} alt="QR" />` : null}
+        <div class="addr">${this.address || "Loading address…"}</div>
+        ${this.qr ? html`<img src=${this.qr} alt="QR Code" />` : null}
         <div>
-          <button @click=${() => navigator.clipboard.writeText(this.address)}>
-            Copy
+          <button @click=${this.copyAddress}>
+            ${this.copied ? "Copied!" : "Copy address"}
           </button>
-          <button @click=${this.newAddr}>New address</button>
+          <button class="secondary" @click=${this.newAddr}>New address</button>
         </div>
+        ${this.error ? html`<div class="err">${this.error}</div>` : null}
       </div>
     `;
   }

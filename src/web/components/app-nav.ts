@@ -43,6 +43,7 @@ export class AppNav extends LitElement {
       ["chat", "Chat"],
       ["wallet", "Wallet"],
       ["transfer", "Transfer"],
+      ["dao", "DAO"],
       ["mine", "Mine"],
       ["settings", "Settings"],
     ];

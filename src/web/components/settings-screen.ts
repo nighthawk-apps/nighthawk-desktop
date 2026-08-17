@@ -2,8 +2,6 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import {
   api,
-  type DaoProposalSummary,
-  type DaoSummary,
   type Network,
   type Prefs,
   type WalletProfiles,
@@ -13,19 +11,13 @@ import {
 export class SettingsScreen extends LitElement {
   @state() private prefs: Prefs | null = null;
   @state() private backup: string[] = [];
+  @state() private backupCopied = false;
   @state() private message = "";
   @state() private error = "";
   @state() private artiRunning = false;
   @state() private wallets: WalletProfiles | null = null;
   @state() private newWalletLabel = "";
   @state() private renameLabel = "";
-  @state() private daos: DaoSummary[] = [];
-  @state() private proposals: DaoProposalSummary[] = [];
-  @state() private selectedDao = "";
-  @state() private proposeAmount = "";
-  @state() private proposeRecipient = "";
-  @state() private proposeDuration = "10";
-  @state() private proposeTokenId = "";
 
   static styles = css`
     :host {
@@ -98,11 +90,6 @@ export class SettingsScreen extends LitElement {
       align-items: center;
       flex-wrap: wrap;
     }
-    .dao {
-      font-size: var(--font-size-sm);
-      padding: 8px 0;
-      border-bottom: 1px solid var(--color-steel-border-muted);
-    }
   `;
 
   async connectedCallback() {
@@ -113,11 +100,6 @@ export class SettingsScreen extends LitElement {
     }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
-    try {
-      this.daos = await api.listDaos();
-    } catch {
-      this.daos = [];
-    }
   }
 
   private async save() {
@@ -236,44 +218,6 @@ export class SettingsScreen extends LitElement {
       this.wallets = await api.walletsList();
       this.message = "Wallet profile removed — reloading…";
       location.reload();
-    } catch (e: any) {
-      this.error = String(e);
-    }
-  }
-
-  private async loadProposals(name: string) {
-    this.selectedDao = name;
-    try {
-      this.proposals = await api.listProposals(name);
-    } catch (e: any) {
-      this.error = String(e);
-    }
-  }
-
-  private async vote(bulla: string, yes: boolean) {
-    try {
-      const tx = await api.daoVote(bulla, yes);
-      this.message = `Vote broadcast: ${tx}`;
-    } catch (e: any) {
-      this.error = String(e);
-    }
-  }
-
-  private async proposeTransfer() {
-    if (!this.selectedDao || !this.proposeAmount.trim() || !this.proposeRecipient.trim()) {
-      this.error = "Select a DAO and fill amount + recipient";
-      return;
-    }
-    try {
-      const tx = await api.daoProposeTransfer({
-        daoName: this.selectedDao,
-        durationBlockwindows: Number(this.proposeDuration) || 10,
-        amount: this.proposeAmount.trim(),
-        tokenId: this.proposeTokenId || undefined,
-        recipientAddress: this.proposeRecipient.trim(),
-      });
-      this.message = `Propose broadcast: ${tx}`;
-      await this.loadProposals(this.selectedDao);
     } catch (e: any) {
       this.error = String(e);
     }
@@ -420,109 +364,32 @@ export class SettingsScreen extends LitElement {
       </div>
 
       <div class="card">
-        <h3>DAO Hub</h3>
-        <p class="msg">
-          Lists DAOs already present in this wallet. Import/create is done via
-          the shared FFI / mobile flow — propose and vote once a DAO appears
-          here.
-        </p>
-        <button
-          class="secondary"
-          @click=${async () => {
-            try {
-              this.daos = await api.listDaos();
-              this.message = `Loaded ${this.daos.length} DAO(s)`;
-            } catch (e: any) {
-              this.error = String(e);
-            }
-          }}
-        >
-          Refresh DAO list
-        </button>
-        ${this.daos.length === 0
-          ? html`<p class="msg">No DAOs imported in this wallet yet.</p>`
-          : this.daos.map(
-              (d) => html`
-                <div class="dao">
-                  <strong>${d.name}</strong>
-                  <div class="msg">
-                    quorum ${d.quorumDisplay} · approval
-                    ${d.approvalRatioPercent.toFixed(1)}%
-                  </div>
-                  <button
-                    class="secondary"
-                    @click=${() => this.loadProposals(d.name)}
-                  >
-                    Proposals
-                  </button>
-                </div>
-              `,
-            )}
-        ${this.selectedDao
-          ? html`
-              <h4>Propose transfer — ${this.selectedDao}</h4>
-              <label>Amount</label>
-              <input
-                .value=${this.proposeAmount}
-                @input=${(e: Event) =>
-                  (this.proposeAmount = (e.target as HTMLInputElement).value)}
-              />
-              <label>Recipient</label>
-              <input
-                .value=${this.proposeRecipient}
-                @input=${(e: Event) =>
-                  (this.proposeRecipient = (e.target as HTMLInputElement).value)}
-              />
-              <label>Duration (blockwindows)</label>
-              <input
-                .value=${this.proposeDuration}
-                @input=${(e: Event) =>
-                  (this.proposeDuration = (e.target as HTMLInputElement).value)}
-              />
-              <label>Token id (optional)</label>
-              <input
-                .value=${this.proposeTokenId}
-                @input=${(e: Event) =>
-                  (this.proposeTokenId = (e.target as HTMLInputElement).value)}
-              />
-              <button class="secondary" @click=${this.proposeTransfer}>
-                Propose transfer
-              </button>
-              <h4>${this.selectedDao} proposals</h4>
-              ${this.proposals.map(
-                (pr) => html`
-                  <div class="dao">
-                    <div>${pr.summaryLine || pr.proposalBullaB58}</div>
-                    <button
-                      class="secondary"
-                      @click=${() => this.vote(pr.proposalBullaB58, true)}
-                    >
-                      Yes
-                    </button>
-                    <button
-                      class="secondary"
-                      @click=${() => this.vote(pr.proposalBullaB58, false)}
-                    >
-                      No
-                    </button>
-                  </div>
-                `,
-              )}
-            `
-          : null}
-      </div>
-
-      <div class="card">
         <h3>Security</h3>
         <p>
           No app PIN — this desktop build opens the wallet automatically. Seed
           material is sealed with a desktop-local key (not a user secret); treat
           the app data directory as sensitive.
         </p>
-        <button @click=${this.doBackup}>Show seed backup</button>
-        <button class="danger" @click=${this.wipe}>Wipe wallet</button>
+        <div class="row">
+          <button @click=${this.doBackup}>Show seed backup</button>
+          <button class="danger" @click=${this.wipe}>Wipe wallet</button>
+        </div>
         ${this.backup.length
-          ? html`<p class="words">${this.backup.join(" ")}</p>`
+          ? html`
+              <div style="margin-top: 12px">
+                <p class="words">${this.backup.join(" ")}</p>
+                <button
+                  class="secondary"
+                  @click=${() => {
+                    navigator.clipboard.writeText(this.backup.join(" "));
+                    this.backupCopied = true;
+                    setTimeout(() => (this.backupCopied = false), 2000);
+                  }}
+                >
+                  ${this.backupCopied ? "Copied!" : "Copy seed phrase"}
+                </button>
+              </div>
+            `
           : null}
       </div>
       <div class="card">

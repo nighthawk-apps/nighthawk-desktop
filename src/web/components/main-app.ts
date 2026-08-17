@@ -79,6 +79,7 @@ export class MainApp extends LitElement {
       import("./wallet-screen"),
       import("./transfer-flow"),
       import("./chat-screen"),
+      import("./dao-screen"),
       import("./mine-screen"),
       import("./settings-screen"),
     ]);
@@ -91,6 +92,8 @@ export class MainApp extends LitElement {
         return html`<chat-screen></chat-screen>`;
       case "transfer":
         return html`<transfer-flow></transfer-flow>`;
+      case "dao":
+        return html`<dao-screen></dao-screen>`;
       case "mine":
         return html`<mine-screen
           @mine-update=${(e: CustomEvent) => (this.mining = e.detail)}
