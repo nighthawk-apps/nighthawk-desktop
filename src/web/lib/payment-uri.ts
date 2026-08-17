@@ -1,4 +1,4 @@
-/** ZIP-321-style DarkFi payment URI: `drk:<address>?amount=&memo=` (memo base64). */
+/** DarkFi payment URI: `drk:<address>?amount=&memo=` (memo is UTF-8, then base64). */
 
 export interface PaymentUri {
   address: string;
@@ -8,8 +8,43 @@ export interface PaymentUri {
 }
 
 const MAX_ADDRESS_LENGTH = 256;
-const MAX_MEMO_LENGTH = 512;
+/** UnifOMR metadata encodes user-memo length as `u8` (FFI `MAX_PAYMENT_MEMO_BYTES`). */
+export const MAX_PAYMENT_MEMO_BYTES = 255;
 const MAX_AMOUNT_HUMAN = 21_000_000;
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true });
+
+export function utf8ByteLength(s: string): number {
+  return textEncoder.encode(s).length;
+}
+
+export function truncateUtf8Bytes(
+  s: string,
+  maxBytes = MAX_PAYMENT_MEMO_BYTES,
+): string {
+  const bytes = textEncoder.encode(s);
+  if (bytes.length <= maxBytes) return s;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
+}
+
+function decodeBase64Memo(memoParam: string): string | undefined {
+  try {
+    const bin = atob(memoParam);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) & 0xff;
+    if (bytes.length > MAX_PAYMENT_MEMO_BYTES) return undefined;
+    const text = textDecoder.decode(bytes);
+    if ([...text].some((ch) => (ch.codePointAt(0) ?? 0) < 32)) {
+      return undefined;
+    }
+    return text;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Parse a `drk:` payment URI or a bare address.
@@ -63,17 +98,7 @@ export function parsePaymentUri(raw: string): PaymentUri | null {
     let memo: string | undefined;
     const memoParam = params.get("memo");
     if (memoParam) {
-      try {
-        const decoded = atob(memoParam);
-        if (
-          decoded.length <= MAX_MEMO_LENGTH &&
-          ![...decoded].some((ch) => ch.charCodeAt(0) < 32)
-        ) {
-          memo = decoded;
-        }
-      } catch {
-        /* ignore bad memo */
-      }
+      memo = decodeBase64Memo(memoParam);
     }
 
     return { address: addressRaw, amount, memo };

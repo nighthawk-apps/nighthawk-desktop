@@ -6,7 +6,12 @@ import {
   type AddressBookEntry,
   type TokenBalance,
 } from "../lib/api";
-import { applyRecipientPaste } from "../lib/payment-uri";
+import {
+  applyRecipientPaste,
+  MAX_PAYMENT_MEMO_BYTES,
+  truncateUtf8Bytes,
+  utf8ByteLength,
+} from "../lib/payment-uri";
 
 @customElement("send-flow")
 export class SendFlow extends LitElement {
@@ -116,7 +121,7 @@ export class SendFlow extends LitElement {
   }) {
     this.recipient = parsed.address;
     if (parsed.amount) this.amount = parsed.amount;
-    if (parsed.memo) this.memo = parsed.memo;
+    if (parsed.memo) this.memo = truncateUtf8Bytes(parsed.memo);
     this.scanHint = parsed.amount || parsed.memo
       ? "Filled from payment URI"
       : "Address filled";
@@ -303,12 +308,14 @@ export class SendFlow extends LitElement {
         @input=${(e: Event) =>
           (this.amount = (e.target as HTMLInputElement).value)}
       />
-      <label>Memo (optional)</label>
+      <label>Memo (optional, ${utf8ByteLength(this.memo)}/${MAX_PAYMENT_MEMO_BYTES} UTF-8 bytes)</label>
       <textarea
         rows="2"
         .value=${this.memo}
         @input=${(e: Event) =>
-          (this.memo = (e.target as HTMLTextAreaElement).value)}
+          (this.memo = truncateUtf8Bytes(
+            (e.target as HTMLTextAreaElement).value,
+          ))}
       ></textarea>
       ${this.fee !== null
         ? html`<p class="msg">
