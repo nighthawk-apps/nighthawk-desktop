@@ -1,7 +1,11 @@
-//! Local vault without a user PIN lock.
+//! Local vault with OS keychain–backed master key.
 //!
-//! Secrets live in `vault.dat` (AES-256-GCM) under a desktop-local key. The app
-//! opens the wallet automatically on launch — no unlock screen.
+//! Secrets live in `vault.dat` (AES-256-GCM). The encryption key is stored in
+//! the OS keychain (macOS Keychain / Windows Credential Manager / Linux
+//! SecretService) via the `keyring` crate. Falls back to PBKDF2 derivation
+//! from a static constant only when the keychain is unavailable.
+//!
+//! The app opens the wallet automatically on launch — no unlock screen.
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -13,23 +17,32 @@ use parking_lot::Mutex;
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// Bumped when PIN-sealed vaults were retired. Older metas are wiped on sight.
-const META_VERSION: u32 = 2;
+/// Version 3 = keychain-backed vault key. Version 2 = legacy PBKDF2 constant.
+const META_VERSION: u32 = 3;
+/// Legacy version for migration detection.
+const LEGACY_META_VERSION: u32 = 2;
 const PBKDF2_ITERS: u32 = 100_000;
-/// Not a user secret — seals the vault on disk so a casual file copy is opaque.
+/// Legacy fallback — only used when keyring is unavailable.
 const DESKTOP_VAULT_SECRET: &str = "nighthawk-desktop-local-vault-v2";
+
+const KEYRING_SERVICE: &str = "com.nighthawkapps.desktop.vault";
+const KEYRING_MASTER_KEY: &str = "master_key";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VaultMeta {
     version: u32,
     salt_hex: String,
-    /// Hex of derived key (integrity check).
+    /// SHA-256 of the derived AES key (integrity check). Older vaults may
+    /// store the raw key hex here; both forms are accepted on read.
     key_hash: String,
+    /// `true` when the master key lives in OS keychain rather than PBKDF2.
+    #[serde(default)]
+    keychain_backed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +78,61 @@ fn ensure_vault_dir() -> Result<()> {
     fs::create_dir_all(vault_dir()).context("create app data dir")
 }
 
-fn derive_key(salt: &[u8]) -> [u8; 32] {
+/// Derive a key from a static constant (legacy path).
+fn derive_key_pbkdf2(salt: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     pbkdf2_hmac::<Sha256>(DESKTOP_VAULT_SECRET.as_bytes(), salt, PBKDF2_ITERS, &mut out);
     out
+}
+
+/// Get or create a master key from the OS keychain.
+/// Returns `None` if the keychain is unavailable.
+fn keychain_master_key() -> Option<[u8; 32]> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_MASTER_KEY).ok()?;
+    match entry.get_password() {
+        Ok(hex_str) => {
+            let bytes = hex::decode(hex_str.trim()).ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes);
+            Some(key)
+        }
+        Err(keyring::Error::NoEntry) => {
+            // Generate a new master key and store it.
+            let mut key = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut key);
+            if entry.set_password(&hex::encode(key)).is_ok() {
+                Some(key)
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+fn key_fingerprint(key: &[u8; 32]) -> String {
+    hex::encode(Sha256::digest(key))
+}
+
+/// Accept SHA-256 fingerprints and the raw-key hex some older writers stored.
+fn key_matches_meta(key: &[u8; 32], key_hash: &str) -> bool {
+    key_fingerprint(key) == key_hash || hex::encode(key) == key_hash
+}
+
+/// Derive the vault encryption key. Prefers OS keychain; falls back to PBKDF2.
+fn derive_key(salt: &[u8], use_keychain: bool) -> ([u8; 32], bool) {
+    if use_keychain {
+        if let Some(master) = keychain_master_key() {
+            // Mix master key with salt for per-vault uniqueness.
+            let mut out = [0u8; 32];
+            pbkdf2_hmac::<Sha256>(&master, salt, 1, &mut out);
+            return (out, true);
+        }
+    }
+    (derive_key_pbkdf2(salt), false)
 }
 
 fn seal(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -111,8 +175,9 @@ fn read_meta() -> Result<Option<VaultMeta>> {
         return Ok(None);
     };
     let version = raw.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    if version != META_VERSION {
-        // PIN-era (v1) or unknown — drop so the user re-creates without unlock.
+    // Accept current version and legacy v2 (PBKDF2-only).
+    if version != META_VERSION && version != LEGACY_META_VERSION {
+        // PIN-era (v1) or unknown — drop so the user re-creates.
         let _ = fs::remove_file(meta_path());
         let _ = fs::remove_file(data_path());
         return Ok(None);
@@ -130,7 +195,7 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
     ensure_vault_dir()?;
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
-    let key = derive_key(&salt);
+    let (key, keychain_backed) = derive_key(&salt, true);
     let payload = VaultPayload {
         mnemonic: mnemonic.join(" "),
         wallet_pass: wallet_pass.to_string(),
@@ -141,7 +206,8 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
     write_meta(&VaultMeta {
         version: META_VERSION,
         salt_hex: hex::encode(salt),
-        key_hash: hex::encode(key),
+        key_hash: key_fingerprint(&key),
+        keychain_backed,
     })?;
     Ok(())
 }
@@ -149,8 +215,17 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
 fn decrypt_payload() -> Result<VaultPayload> {
     let meta = read_meta()?.ok_or_else(|| anyhow!("No wallet on this device"))?;
     let salt = hex::decode(&meta.salt_hex).context("bad salt")?;
-    let key = derive_key(&salt);
-    if hex::encode(key) != meta.key_hash {
+    let (key, _) = derive_key(&salt, meta.keychain_backed);
+    if !key_matches_meta(&key, &meta.key_hash) {
+        // If keychain-backed but keychain key was lost/reset, try PBKDF2 fallback.
+        if meta.keychain_backed {
+            let fallback = derive_key_pbkdf2(&salt);
+            if key_matches_meta(&fallback, &meta.key_hash) {
+                let blob = fs::read(data_path()).context("read vault.dat")?;
+                let plain = open_seal(&fallback, &blob)?;
+                return serde_json::from_slice(&plain).context("parse vault payload");
+            }
+        }
         return Err(anyhow!("Corrupt vault"));
     }
     let blob = fs::read(data_path()).context("read vault.dat")?;
@@ -205,7 +280,7 @@ pub fn create_vault(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
     Ok(())
 }
 
-/// True when the active profile has a current (PIN-less) vault.
+/// True when the active profile has a current vault.
 pub fn wallet_exists() -> bool {
     vault_ready()
 }
@@ -262,6 +337,10 @@ pub fn wipe_secrets() -> Result<()> {
     lock_session();
     let _ = fs::remove_file(meta_path());
     let _ = fs::remove_file(data_path());
+    // Also remove the keychain master key.
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_MASTER_KEY) {
+        let _ = entry.delete_credential();
+    }
     legacy_delete_all();
     Ok(())
 }

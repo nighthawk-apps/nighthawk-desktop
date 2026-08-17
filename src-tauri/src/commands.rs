@@ -923,13 +923,22 @@ pub fn chat_send(
 
 fn parse_hashrate(log: &str) -> Option<f64> {
     // miner    speed 10s/60s/15m 6990.2 6976.5 6986.6 H/s
+    // Some XMRig builds report in kH/s or MH/s.
     for line in log.lines().rev() {
-        if line.contains("speed") && line.contains("H/s") {
+        if line.contains("speed") && (line.contains("H/s") || line.contains("h/s")) {
+            let multiplier = if line.contains("MH/s") || line.contains("Mh/s") {
+                1_000_000.0
+            } else if line.contains("kH/s") || line.contains("kh/s") || line.contains("KH/s") {
+                1_000.0
+            } else {
+                1.0
+            };
             for part in line.split_whitespace() {
                 if let Ok(v) = part.parse::<f64>() {
+                    let hs = v * multiplier;
                     // L6: reject non-finite and unreasonably large values
-                    if v.is_finite() && v > 10.0 && v < 1_000_000_000.0 {
-                        return Some(v);
+                    if hs.is_finite() && hs > 10.0 && hs < 1_000_000_000.0 {
+                        return Some(hs);
                     }
                 }
             }

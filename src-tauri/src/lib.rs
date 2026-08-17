@@ -8,6 +8,7 @@ mod state;
 mod wallets;
 
 use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -82,6 +83,17 @@ pub fn run() {
             commands::backup_mnemonic,
             commands::wipe_wallet,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Nighthawk");
+        .build(tauri::generate_context!())
+        .expect("error while building Nighthawk")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill any orphaned xmrig child process on app exit.
+                let state: tauri::State<AppState> = app.state();
+                let miner = state.miner.lock().take();
+                if let Some(mut m) = miner {
+                    let _ = m.child.kill();
+                    let _ = m.child.wait();
+                }
+            }
+        });
 }
