@@ -1193,6 +1193,7 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(network));
     let _ = std::fs::remove_file(dir.join("vault.dat"));
     let _ = std::fs::remove_file(dir.join("vault.meta.json"));
+    let _ = std::fs::remove_file(dir.join("vault.key"));
     crate::dm_store::clear();
     secure_store::wipe_secrets().map_err(map_err)?;
     Ok(())
@@ -1200,4 +1201,34 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
 
 pub fn initial_prefs() -> Prefs {
     load_prefs_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_hashrate;
+
+    #[test]
+    fn parse_hashrate_h_per_s() {
+        let log = "miner    speed 10s/60s/15m 6990.2 6976.5 6986.6 H/s";
+        assert_eq!(parse_hashrate(log), Some(6990.2));
+    }
+
+    #[test]
+    fn parse_hashrate_kh_per_s() {
+        let log = "miner    speed 10s/60s/15m 6.99 6.97 6.98 kH/s";
+        let v = parse_hashrate(log).expect("kH/s");
+        assert!((v - 6990.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn parse_hashrate_mh_per_s() {
+        let log = "miner    speed 10s/60s/15m 0.00699 0.00697 0.00698 MH/s";
+        let v = parse_hashrate(log).expect("MH/s");
+        assert!((v - 6990.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn parse_hashrate_ignores_non_speed_lines() {
+        assert_eq!(parse_hashrate("accepted 1/1 (100%)"), None);
+    }
 }

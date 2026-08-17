@@ -2,8 +2,9 @@
 //!
 //! Secrets live in `vault.dat` (AES-256-GCM). The encryption key is stored in
 //! the OS keychain (macOS Keychain / Windows Credential Manager / Linux
-//! SecretService) via the `keyring` crate. Falls back to PBKDF2 derivation
-//! from a static constant only when the keychain is unavailable.
+//! SecretService) via the `keyring` crate. If the keychain is unavailable,
+//! a random 32-byte master key is written to `vault.key` (mode 0600).
+//! The static PBKDF2 constant is used only to open legacy v2 vaults.
 //!
 //! The app opens the wallet automatically on launch — no unlock screen.
 
@@ -43,6 +44,9 @@ struct VaultMeta {
     /// `true` when the master key lives in OS keychain rather than PBKDF2.
     #[serde(default)]
     keychain_backed: bool,
+    /// Random 32-byte master key in `vault.key` (0600) when keychain is down.
+    #[serde(default)]
+    file_backed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +76,10 @@ fn meta_path() -> PathBuf {
 
 fn data_path() -> PathBuf {
     vault_dir().join("vault.dat")
+}
+
+fn file_key_path() -> PathBuf {
+    vault_dir().join("vault.key")
 }
 
 fn ensure_vault_dir() -> Result<()> {
@@ -122,17 +130,77 @@ fn key_matches_meta(key: &[u8; 32], key_hash: &str) -> bool {
     key_fingerprint(key) == key_hash || hex::encode(key) == key_hash
 }
 
-/// Derive the vault encryption key. Prefers OS keychain; falls back to PBKDF2.
-fn derive_key(salt: &[u8], use_keychain: bool) -> ([u8; 32], bool) {
-    if use_keychain {
+fn mix_master(master: &[u8; 32], salt: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    pbkdf2_hmac::<Sha256>(master, salt, 1, &mut out);
+    out
+}
+
+fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .context("create vault.key")?;
+        f.write_all(bytes).context("write vault.key")?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, bytes).context("write vault.key")?;
+    }
+    Ok(())
+}
+
+/// Random master key on disk. Used only when the OS keychain is unavailable.
+fn file_master_key() -> Option<[u8; 32]> {
+    let path = file_key_path();
+    if path.exists() {
+        let bytes = fs::read(&path).ok()?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        return Some(key);
+    }
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    ensure_vault_dir().ok()?;
+    write_secret_file(&path, &key).ok()?;
+    Some(key)
+}
+
+/// New vaults: OS keychain, else a random `vault.key`. Never the static PBKDF2 string.
+fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
+    if let Some(master) = keychain_master_key() {
+        return Ok((mix_master(&master, salt), true, false));
+    }
+    if let Some(master) = file_master_key() {
+        return Ok((mix_master(&master, salt), false, true));
+    }
+    Err(anyhow!(
+        "unable to persist vault key (OS keychain and vault.key both failed)"
+    ))
+}
+
+fn derive_key_for_read(salt: &[u8], meta: &VaultMeta) -> [u8; 32] {
+    if meta.keychain_backed {
         if let Some(master) = keychain_master_key() {
-            // Mix master key with salt for per-vault uniqueness.
-            let mut out = [0u8; 32];
-            pbkdf2_hmac::<Sha256>(&master, salt, 1, &mut out);
-            return (out, true);
+            return mix_master(&master, salt);
         }
     }
-    (derive_key_pbkdf2(salt), false)
+    if meta.file_backed {
+        if let Some(master) = file_master_key() {
+            return mix_master(&master, salt);
+        }
+    }
+    derive_key_pbkdf2(salt)
 }
 
 fn seal(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -195,7 +263,7 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
     ensure_vault_dir()?;
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
-    let (key, keychain_backed) = derive_key(&salt, true);
+    let (key, keychain_backed, file_backed) = derive_key_for_write(&salt)?;
     let payload = VaultPayload {
         mnemonic: mnemonic.join(" "),
         wallet_pass: wallet_pass.to_string(),
@@ -208,6 +276,7 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
         salt_hex: hex::encode(salt),
         key_hash: key_fingerprint(&key),
         keychain_backed,
+        file_backed,
     })?;
     Ok(())
 }
@@ -215,14 +284,20 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
 fn decrypt_payload() -> Result<VaultPayload> {
     let meta = read_meta()?.ok_or_else(|| anyhow!("No wallet on this device"))?;
     let salt = hex::decode(&meta.salt_hex).context("bad salt")?;
-    let (key, _) = derive_key(&salt, meta.keychain_backed);
+    let key = derive_key_for_read(&salt, &meta);
     if !key_matches_meta(&key, &meta.key_hash) {
-        // If keychain-backed but keychain key was lost/reset, try PBKDF2 fallback.
-        if meta.keychain_backed {
-            let fallback = derive_key_pbkdf2(&salt);
-            if key_matches_meta(&fallback, &meta.key_hash) {
+        // Lost keychain / file key: try the other sources, then legacy PBKDF2.
+        for candidate in [
+            keychain_master_key().map(|m| mix_master(&m, &salt)),
+            file_master_key().map(|m| mix_master(&m, &salt)),
+            Some(derive_key_pbkdf2(&salt)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if key_matches_meta(&candidate, &meta.key_hash) {
                 let blob = fs::read(data_path()).context("read vault.dat")?;
-                let plain = open_seal(&fallback, &blob)?;
+                let plain = open_seal(&candidate, &blob)?;
                 return serde_json::from_slice(&plain).context("parse vault payload");
             }
         }
@@ -337,10 +412,36 @@ pub fn wipe_secrets() -> Result<()> {
     lock_session();
     let _ = fs::remove_file(meta_path());
     let _ = fs::remove_file(data_path());
+    let _ = fs::remove_file(file_key_path());
     // Also remove the keychain master key.
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_MASTER_KEY) {
         let _ = entry.delete_credential();
     }
     legacy_delete_all();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_fingerprint_is_not_the_raw_key() {
+        let key = [7u8; 32];
+        let fp = key_fingerprint(&key);
+        assert_ne!(fp, hex::encode(key));
+        assert_eq!(fp.len(), 64);
+        assert!(key_matches_meta(&key, &fp));
+        assert!(key_matches_meta(&key, &hex::encode(key)));
+        assert!(!key_matches_meta(&key, "00"));
+    }
+
+    #[test]
+    fn mix_master_changes_with_salt() {
+        let master = [9u8; 32];
+        let a = mix_master(&master, &[1u8; 16]);
+        let b = mix_master(&master, &[2u8; 16]);
+        assert_ne!(a, b);
+        assert_ne!(a, master);
+    }
 }
