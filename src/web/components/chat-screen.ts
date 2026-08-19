@@ -139,7 +139,7 @@ export class ChatScreen extends LitElement {
         if (
           this.autoReconnect &&
           this.wasConnected &&
-          (next === "failed" || next === "not_running")
+          (next === "failed" || next === "not_running" || next === "stopped")
         ) {
           this.scheduleReconnect();
         }
@@ -537,13 +537,39 @@ export class ChatScreen extends LitElement {
     }
   }
 
+  /**
+   * `chat_status` returns DAG phase (`stopped` / `connected` / …), not the
+   * coarse lifecycle string Android/iOS poll with `darkircStatus()`.
+   */
+  private isIdlePhase(phase: string) {
+    return (
+      phase === "not_running" ||
+      phase === "stopped" ||
+      phase === "failed"
+    );
+  }
+
+  /** Wait until FFI reports idle so the next start is not rejected as "stopping". */
+  private async awaitDaemonNotRunning(timeoutMs = 5_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const s = await api.chatStatus().catch(() => "");
+      if (this.isIdlePhase(s)) {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
   private async start() {
     this.error = "";
-    // Retry path: stop a failed/stale daemon before starting again.
+    // Stop any live/failed session (phase may be `connected` or a DAG-sync
+    // name, not `running`), then drain like iOS `restartForChat`.
     const cur = await api.chatStatus().catch(() => this.status);
-    if (cur === "failed" || cur === "running" || cur === "stopping") {
+    if (cur === "failed" || !this.isIdlePhase(cur)) {
       await api.chatStop().catch(() => undefined);
     }
+    await this.awaitDaemonNotRunning();
     this.status = "starting";
     this.startStatusPoll();
     try {
