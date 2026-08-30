@@ -36,14 +36,14 @@ pub struct Prefs {
     /// Active multi-wallet profile id (`default` = legacy app-root layout).
     #[serde(default = "default_wallet_id", alias = "active_wallet_id")]
     pub active_wallet_id: String,
-    /// When true, UnifOMR-only sync (no supplemental/gap trial decrypt).
-    /// Default false so Nighthawk can receive from non-UnifOMR wallets (e.g. `drk`).
+    /// When true, UnifOMR-only sync (no supplemental trial decrypt).
+    /// Default true. Turn off in settings to receive from `drk`.
     #[serde(default = "default_strict_omr_only", alias = "strict_omr_only")]
     pub strict_omr_only: bool,
 }
 
 fn default_strict_omr_only() -> bool {
-    false
+    true
 }
 
 fn default_fee_tier() -> String {
@@ -81,6 +81,22 @@ pub fn load_prefs() -> Prefs {
     match fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => Prefs::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_strict_omr_only_is_on() {
+        assert!(default_strict_omr_only());
+        assert!(Prefs::default().strict_omr_only);
+        let parsed: Prefs = serde_json::from_str(
+            r#"{"network":"testnet","lightwalletUrl":"http://127.0.0.1:9067","stratumUrl":"x","useTor":true,"torSocksPort":9150,"mineThreads":1,"chatNick":"n","birthdayHeight":0}"#,
+        )
+        .unwrap();
+        assert!(parsed.strict_omr_only);
     }
 }
 

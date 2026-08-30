@@ -96,7 +96,7 @@ export class SettingsScreen extends LitElement {
     super.connectedCallback();
     this.prefs = await api.getPrefs();
     if (this.prefs && this.prefs.strictOmrOnly === undefined) {
-      this.prefs.strictOmrOnly = false;
+      this.prefs.strictOmrOnly = true;
     }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
@@ -127,6 +127,13 @@ export class SettingsScreen extends LitElement {
   }
 
   private async doBackup() {
+    if (
+      !confirm(
+        "Show your seed phrase? Anyone who sees it can spend your funds.",
+      )
+    ) {
+      return;
+    }
     try {
       this.backup = await api.backupMnemonic();
       this.message = "Seed shown — store safely";

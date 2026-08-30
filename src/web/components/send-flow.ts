@@ -207,6 +207,15 @@ export class SendFlow extends LitElement {
   private async send() {
     this.error = "";
     this.result = "";
+    const parsedPreview = applyRecipientPaste(this.recipient);
+    const dest = (parsedPreview?.address ?? this.recipient).trim();
+    if (
+      !confirm(
+        `Send ${this.amount.trim()} to ${dest}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
     this.busy = true;
     try {
       // Allow pasting a drk: URI into recipient at send time

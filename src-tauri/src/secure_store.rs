@@ -3,8 +3,8 @@
 //! Secrets live in `vault.dat` (AES-256-GCM). The encryption key is stored in
 //! the OS keychain (macOS Keychain / Windows Credential Manager / Linux
 //! SecretService) via the `keyring` crate. If the keychain is unavailable,
-//! a random 32-byte master key is written to `vault.key` (mode 0600).
-//! The static PBKDF2 constant is used only to open legacy v2 vaults.
+//! New vaults require the OS keychain. Legacy `vault.key` files are still
+//! readable. The static PBKDF2 constant is used only to open v2 vaults.
 //!
 //! The app opens the wallet automatically on launch — no unlock screen.
 
@@ -176,16 +176,15 @@ fn file_master_key() -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// New vaults: OS keychain, else a random `vault.key`. Never the static PBKDF2 string.
+/// New vaults require the OS keychain. `vault.key` is read-only for legacy files
+/// so we never write the master key next to the ciphertext.
 fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
     if let Some(master) = keychain_master_key() {
         return Ok((mix_master(&master, salt), true, false));
     }
-    if let Some(master) = file_master_key() {
-        return Ok((mix_master(&master, salt), false, true));
-    }
     Err(anyhow!(
-        "unable to persist vault key (OS keychain and vault.key both failed)"
+        "OS keychain is required to create or update the vault; \
+         refusing to write vault.key beside the ciphertext"
     ))
 }
 
@@ -400,11 +399,9 @@ pub fn load_wallet_pass() -> Result<String> {
         .ok_or_else(|| anyhow!("Wallet not open"))
 }
 
-/// Return mnemonic (opens vault session if needed).
+/// Return mnemonic. Requires an already-unlocked session so unauthenticated
+/// IPC cannot open the vault and export the seed.
 pub fn backup_mnemonic() -> Result<Vec<String>> {
-    if session().lock().is_none() {
-        unlock_session()?;
-    }
     load_mnemonic()
 }
 

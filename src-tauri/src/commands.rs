@@ -209,6 +209,9 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
 
 #[tauri::command]
 pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String> {
+    if !prefs.lightwallet_url.trim().is_empty() {
+        validate_lwd_url(&prefs.lightwallet_url)?;
+    }
     let old = state.prefs.lock().clone();
     let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
         || old.use_tor != prefs.use_tor
@@ -1142,6 +1145,14 @@ pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String
     Ok(())
 }
 
+fn is_rfc1918_172(host: &str) -> bool {
+    let Some(rest) = host.strip_prefix("172.") else {
+        return false;
+    };
+    let octet = rest.split('.').next().and_then(|s| s.parse::<u8>().ok());
+    matches!(octet, Some(n) if (16..=31).contains(&n))
+}
+
 fn validate_lwd_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url.trim()).map_err(|e| format!("invalid LWD URL: {e}"))?;
     let scheme = parsed.scheme();
@@ -1164,7 +1175,9 @@ fn validate_lwd_url(url: &str) -> Result<(), String> {
         let blocked = host.starts_with("10.")
             || host.starts_with("192.168.")
             || host.starts_with("127.")
-            || host == "0.0.0.0";
+            || host.starts_with("169.254.")
+            || host == "0.0.0.0"
+            || is_rfc1918_172(host);
         if blocked {
             return Err("private/loopback host not allowed for remote LWD".into());
         }
@@ -1205,7 +1218,7 @@ pub fn initial_prefs() -> Prefs {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_hashrate;
+    use super::{parse_hashrate, validate_lwd_url};
 
     #[test]
     fn parse_hashrate_h_per_s() {
@@ -1230,5 +1243,20 @@ mod tests {
     #[test]
     fn parse_hashrate_ignores_non_speed_lines() {
         assert_eq!(parse_hashrate("accepted 1/1 (100%)"), None);
+    }
+
+    #[test]
+    fn validate_lwd_url_allows_loopback_cleartext() {
+        assert!(validate_lwd_url("http://127.0.0.1:9067").is_ok());
+        assert!(validate_lwd_url("http://localhost:9067").is_ok());
+    }
+
+    #[test]
+    fn validate_lwd_url_rejects_ssrf_and_cleartext_remote() {
+        assert!(validate_lwd_url("http://example.com:9067").is_err());
+        assert!(validate_lwd_url("https://192.168.1.1:9067").is_err());
+        assert!(validate_lwd_url("https://172.16.0.1:9067").is_err());
+        assert!(validate_lwd_url("https://169.254.1.1:9067").is_err());
+        assert!(validate_lwd_url("https://example.com:443").is_ok());
     }
 }
