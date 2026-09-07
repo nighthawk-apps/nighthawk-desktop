@@ -77,6 +77,7 @@ export interface LightSyncState {
   syncMethod: string;
   fallbackReason: string;
   fallbackUserMessage: string;
+  protoVersionMismatch: boolean;
 }
 
 export interface TxRecord {

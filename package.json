@@ -1,7 +1,7 @@
 {
   "name": "nighthawk-app-desktop",
   "private": true,
-  "version": "3.00.03",
+  "version": "3.00.05",
   "type": "module",
   "scripts": {
     "dev": "vite",

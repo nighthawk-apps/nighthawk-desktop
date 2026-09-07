@@ -54,6 +54,7 @@ pub struct LightSyncDto {
     pub sync_method: String,
     pub fallback_reason: String,
     pub fallback_user_message: String,
+    pub proto_version_mismatch: bool,
 }
 
 #[derive(Serialize)]
@@ -241,6 +242,35 @@ pub fn generate_mnemonic() -> Vec<String> {
     generate_darkfi_mnemonic()
 }
 
+/// One-shot e2e helper: if `e2e_restore_mnemonic.txt` is in the app data dir and
+/// no vault exists, create the vault from that phrase and delete the file.
+/// Never logs the phrase. Debug-only — omitted from release binaries.
+#[cfg(debug_assertions)]
+pub(crate) fn maybe_e2e_restore_from_file() {
+    let path = crate::paths::app_root().join("e2e_restore_mnemonic.txt");
+    if !path.is_file() || secure_store::wallet_exists() {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&path);
+    let mnemonic: Vec<String> = text
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if !validate_darkfi_mnemonic(mnemonic.clone()) {
+        tracing::error!("e2e restore file was present but the phrase is invalid");
+        return;
+    }
+    let pass = secure_store::generate_wallet_pass();
+    match secure_store::create_vault(&mnemonic, &pass) {
+        Ok(()) => tracing::info!("e2e restore: vault created"),
+        Err(e) => tracing::error!("e2e restore failed: {e}"),
+    }
+}
+
 fn persist_and_open(
     app: &AppHandle,
     state: &AppState,
@@ -416,6 +446,7 @@ pub fn wallet_light_sync(state: State<'_, AppState>) -> Result<LightSyncDto, Str
             sync_method: format!("{:?}", s.sync_method),
             fallback_reason: format!("{:?}", s.fallback_reason),
             fallback_user_message: s.fallback_user_message,
+            proto_version_mismatch: s.proto_version_mismatch,
         })
     })
 }

@@ -20,6 +20,8 @@ pub fn run() {
 
     let prefs = commands::initial_prefs();
     let _ = wallets::bootstrap_from_prefs();
+    #[cfg(debug_assertions)]
+    commands::maybe_e2e_restore_from_file();
     let state = AppState::new(prefs);
 
     tauri::Builder::default()

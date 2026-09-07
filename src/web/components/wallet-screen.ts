@@ -291,6 +291,11 @@ export class WalletScreen extends LitElement {
                     ${snap.fallbackUserMessage}
                   </div>`
                 : null}
+              ${snap.protoVersionMismatch
+                ? html`<div class="warn" style="margin-top:8px;margin-bottom:0;color:#f39c12">
+                    ⚠️ Lightwallet protocol version mismatch. Consider upgrading Nighthawk Desktop.
+                  </div>`
+                : null}
             </div>
           `
         : html`<div class="sub">${this.sync || "Syncing…"}</div>`}

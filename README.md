@@ -1,10 +1,16 @@
 # Nighthawk Desktop
 
+<p align="center">
+  <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
+</p>
+
 Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
 - Same **`darkfi-mobile-ffi`** UniFFI crate as Android (tip `drk` turso/aegis256 wallet, UnifOMR sync, DarkIRC, send/receive)
+- **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
+- **Proto version lockstep:** validates lightwalletd `proto_version` (1.x.x) and renders warning banner on protocol mismatches
 - Local **disk vault** (AES-GCM + PBKDF2) for seed + `wallet_pass` — **no app PIN**; the wallet opens automatically. Treat the data directory as sensitive (anyone with the files can decrypt).
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book
