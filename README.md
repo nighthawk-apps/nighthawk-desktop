@@ -26,7 +26,8 @@ Path dependencies use **sibling directory names** (see `src-tauri/Cargo.toml`):
 
 ```text
 parent/
-  darkfi/                          # upstream DarkFi (via mobile FFI third_party)
+  darkfi/                          # unused by Cargo; FFI uses Android third_party
+  darkfi-nighthawk-testnet/        # nighthawk24 pin (also Android third_party/darkfi)
   darkfi-lightwalletd/             # lightwalletd + UnifOMR reference
   new-nighthawk-android-wallet/    # provides rust/darkfi-mobile-ffi (required)
   nighthawk-app-desktop/           # this repo
