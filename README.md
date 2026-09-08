@@ -15,7 +15,7 @@ Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](h
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book
 - Bundled **xmrig** mining to your deposit address via local darkfid stratum
-- **Tor on by default** for remote lightwalletd / chat (embedded Arti). Default testnet LWD is the Studio ngrok HTTPS endpoint (with TLS pin); switch URL in Settings if needed.
+- **Tor on by default** for remote lightwalletd / chat (embedded Arti). Default testnet LWD is loopback `http://127.0.0.1:9067`; switch URL in Settings for a remote pin.
 - **Trial-decrypt fallback (default on):** receives payments from non-UnifOMR wallets (e.g. upstream `drk`) by trial-decrypting compact blocks when UnifOMR finds no matches. Toggle **Strict UnifOMR sync** in Settings to make sync UnifOMR-only (more private / faster when counterparties also use UnifOMR).
 - UnifOMR Param2 limits: [`docs/unifomr_mvp_limits.md`](docs/unifomr_mvp_limits.md)
 
@@ -23,7 +23,8 @@ Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](h
 
 - Rust toolchain, Node 20+, `pnpm`
 - macOS: Xcode CLT (for local macOS builds)
-- Reachable **darkfi-lightwalletd** (default testnet: Studio ngrok HTTPS; or local `http://127.0.0.1:9067`)
+- Reachable **darkfi-lightwalletd** (default testnet: `http://127.0.0.1:9067`; remote HTTPS still needs a TLS pin)
+- **Sibling directory literally named `new-nighthawk-android-wallet`** (Cargo path-depends on `../../new-nighthawk-android-wallet/rust/darkfi-mobile-ffi`). A repo named `nighthawk-android-wallet` is not enough unless you add that symlink.
 - For mining: **darkfid** with stratum (`:18347` testnet / `:8347` mainnet)
 
 ## Repository layout
@@ -64,9 +65,17 @@ pnpm tauri dev
 
 ## Build
 
+`src-tauri/Cargo.toml` requires a sibling **`new-nighthawk-android-wallet`** (symlink that name to your Android checkout if needed).
+
 ```bash
-pnpm tauri build
+# Dev / compile the .app only (skips Finder/AppleScript DMG layout):
+CI=true pnpm tauri build
+
+# Or skip the DMG bundle:
+pnpm tauri build --bundles app
 ```
+
+Without `CI=true`, `bundle_dmg.sh` fails in non-GUI / agent shells (it drives Finder via AppleScript). The binary and `.app` still compile; only the DMG step needs a real Finder session or `CI=true`.
 
 ## xmrig sidecar
 

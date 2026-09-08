@@ -16,19 +16,25 @@ function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 
 /** Tauri rejects with string | Error | { message } — never show "[object Object]". */
 export function formatInvokeError(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message || String(e);
-  if (e && typeof e === "object") {
+  let raw: string;
+  if (typeof e === "string") raw = e;
+  else if (e instanceof Error) raw = e.message || String(e);
+  else if (e && typeof e === "object") {
     const rec = e as Record<string, unknown>;
-    if (typeof rec.message === "string") return rec.message;
-    if (typeof rec.error === "string") return rec.error;
-    try {
-      return JSON.stringify(e);
-    } catch {
-      /* fall through */
+    if (typeof rec.message === "string") raw = rec.message;
+    else if (typeof rec.error === "string") raw = rec.error;
+    else {
+      try {
+        raw = JSON.stringify(e);
+      } catch {
+        raw = String(e);
+      }
     }
-  }
-  return String(e);
+  } else raw = String(e);
+  return raw
+    .replace(/https?:\/\/[^\s]+/gi, "[redacted-url]")
+    .replace(/tcp(\+tls)?:\/\/[^\s]+/gi, "[redacted-url]")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "[redacted-addr]");
 }
 
 export interface Prefs {

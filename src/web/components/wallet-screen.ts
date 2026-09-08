@@ -8,6 +8,8 @@ import {
   type TxRecord,
 } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { formatDrkAtomic } from "../lib/amount";
+import { formatInvokeError } from "../lib/api";
 
 @customElement("wallet-screen")
 export class WalletScreen extends LitElement {
@@ -227,7 +229,7 @@ export class WalletScreen extends LitElement {
       this.txExtra = extras;
       this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 160 });
     } catch (e: any) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -241,7 +243,7 @@ export class WalletScreen extends LitElement {
       try {
         await this.reload();
       } catch {
-        this.error = String(e);
+        this.error = formatInvokeError(e);
       }
     } finally {
       this.refreshing = false;
@@ -260,12 +262,12 @@ export class WalletScreen extends LitElement {
       this.reorgMsg = e.summaryMessage;
       await this.reload();
     } catch (e: any) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
   render() {
-    const drk = (this.balance / 1e8).toFixed(8);
+    const drk = formatDrkAtomic(this.balance);
     const snap = this.syncDetail;
     const pct = snap ? this.progressPct(snap) : 0;
     return html`
@@ -327,7 +329,7 @@ export class WalletScreen extends LitElement {
                 (t) => html`
                   <div class="token">
                     <span>${t.displayLabel || t.tokenId.slice(0, 16)}…</span>
-                    <span>${(t.balanceAtomic / 1e8).toFixed(8)}</span>
+                    <span>${formatDrkAtomic(t.balanceAtomic)}</span>
                   </div>
                 `,
               )}

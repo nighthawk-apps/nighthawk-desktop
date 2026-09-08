@@ -7,7 +7,7 @@ use crate::wallets;
 use darkfi_mobile_ffi::{
     chacha_decrypt_dm, chacha_encrypt_dm, darkirc_connection_phase, darkirc_status,
     generate_darkfi_mnemonic,
-    generate_dm_keypair, is_arti_running, send_chat_message, start_arti_proxy, start_darkirc,
+    generate_dm_keypair, is_arti_running, redact_sync_error, send_chat_message, start_arti_proxy, start_darkirc,
     stop_arti_proxy, stop_darkirc, validate_darkfi_mnemonic, DarkfiWalletHandle,
     DarkfiWalletNativeError, DarkircEventCallback, DrkBootstrapConfig, ReorgEvent,
     ReorgEventCallback,
@@ -19,11 +19,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 fn map_err(e: impl ToString) -> String {
-    e.to_string()
+    redact_sync_error(&e.to_string())
 }
 
 fn ffi_err(e: DarkfiWalletNativeError) -> String {
-    e.to_string()
+    redact_sync_error(&e.to_string())
 }
 
 #[derive(Serialize)]
@@ -160,9 +160,9 @@ fn build_bootstrap(
         Some(s) if s.trim().is_empty() => None,
         Some(s) => {
             let bytes = hex::decode(s.trim()).map_err(|e| format!("TLS pin hex: {e}"))?;
-            if bytes.len() != 32 {
+            if bytes.is_empty() || bytes.len() % 32 != 0 || bytes.len() > 128 {
                 return Err(format!(
-                    "TLS pin must be 32 bytes (64 hex chars), got {}",
+                    "TLS pin must be 32–128 bytes in 32-byte pins (64–256 hex chars), got {}",
                     bytes.len()
                 ));
             }

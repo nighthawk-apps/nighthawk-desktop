@@ -27,8 +27,8 @@ impl Network {
 
     pub fn default_lwd(self) -> &'static str {
         match self {
-            // Studio testnet LWD via ngrok (see ~/.local/share/darkfi/studio-lwd-endpoint.env).
-            Network::Testnet => "https://epidermis-sandbox-marshland.ngrok-free.dev",
+            // MacBook Pro loopback LWD (not Studio/ngrok).
+            Network::Testnet => "http://127.0.0.1:9067",
             Network::Mainnet => "http://127.0.0.1:9067",
         }
     }
@@ -36,9 +36,7 @@ impl Network {
     /// Leaf-cert SHA-256 pin for [`Self::default_lwd`] when it is remote HTTPS.
     pub fn default_lwd_tls_pin(self) -> Option<&'static str> {
         match self {
-            Network::Testnet => {
-                Some("9f8f3877f312cb48e4d8d050b5c7b70f6144f1c31812d7ec299c32793a274985")
-            }
+            Network::Testnet => None,
             Network::Mainnet => None,
         }
     }

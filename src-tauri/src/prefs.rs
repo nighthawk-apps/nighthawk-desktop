@@ -62,8 +62,8 @@ impl Default for Prefs {
             lightwallet_url: network.default_lwd().to_string(),
             darkfid_rpc_url: None,
             stratum_url: network.default_stratum().to_string(),
-            // Direct to Studio ngrok for testnet; enable Tor in settings if desired.
-            use_tor: true,
+            // Loopback LWD on this MacBook; enable Tor in settings for remote HTTPS.
+            use_tor: false,
             tor_socks_port: 9150,
             mine_threads: 12,
             chat_nick: "nighthawk".to_string(),

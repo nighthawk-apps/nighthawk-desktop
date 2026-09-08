@@ -1,3 +1,5 @@
+import { isValidDrkAmount } from "./amount";
+
 /** DarkFi payment URI: `drk:<address>?amount=&memo=` (memo is UTF-8, then base64). */
 
 export interface PaymentUri {
@@ -10,7 +12,6 @@ export interface PaymentUri {
 const MAX_ADDRESS_LENGTH = 256;
 /** UnifOMR metadata encodes user-memo length as `u8` (FFI `MAX_PAYMENT_MEMO_BYTES`). */
 export const MAX_PAYMENT_MEMO_BYTES = 255;
-const MAX_AMOUNT_HUMAN = 21_000_000;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -88,11 +89,10 @@ export function parsePaymentUri(raw: string): PaymentUri | null {
     let amount: string | undefined;
     const amountParam = params.get("amount");
     if (amountParam != null && amountParam !== "") {
-      const human = Number(amountParam);
-      if (!Number.isFinite(human) || human <= 0 || human > MAX_AMOUNT_HUMAN) {
+      if (!isValidDrkAmount(amountParam)) {
         return null;
       }
-      amount = String(amountParam);
+      amount = amountParam;
     }
 
     let memo: string | undefined;

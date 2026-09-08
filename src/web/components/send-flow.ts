@@ -6,6 +6,8 @@ import {
   type AddressBookEntry,
   type TokenBalance,
 } from "../lib/api";
+import { formatDrkAtomic, isValidDrkAmount } from "../lib/amount";
+import { formatInvokeError } from "../lib/api";
 import {
   applyRecipientPaste,
   MAX_PAYMENT_MEMO_BYTES,
@@ -186,12 +188,16 @@ export class SendFlow extends LitElement {
       this.applyParsed(parsed);
     } catch (err: any) {
       this.scanHint = "";
-      this.error = String(err);
+      this.error = formatInvokeError(err);
     }
   }
 
   private async estimate() {
     this.error = "";
+    if (!isValidDrkAmount(this.amount)) {
+      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+      return;
+    }
     try {
       this.fee = await api.estimateFee({
         recipient: this.recipient.trim(),
@@ -200,13 +206,17 @@ export class SendFlow extends LitElement {
         tokenId: this.tokenId || undefined,
       });
     } catch (e: any) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
   private async send() {
     this.error = "";
     this.result = "";
+    if (!isValidDrkAmount(this.amount)) {
+      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+      return;
+    }
     const parsedPreview = applyRecipientPaste(this.recipient);
     const dest = (parsedPreview?.address ?? this.recipient).trim();
     if (
@@ -230,7 +240,7 @@ export class SendFlow extends LitElement {
         tokenId: this.tokenId || undefined,
       });
     } catch (e: any) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     } finally {
       this.busy = false;
     }
@@ -247,7 +257,7 @@ export class SendFlow extends LitElement {
       });
       this.saveLabel = "";
     } catch (e: any) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -306,7 +316,7 @@ export class SendFlow extends LitElement {
           (t) => html`
             <option value=${t.tokenId}>
               ${t.displayLabel || t.tokenId.slice(0, 12)}…
-              (${(t.balanceAtomic / 1e8).toFixed(4)})
+              (${formatDrkAtomic(t.balanceAtomic)})
             </option>
           `,
         )}
@@ -328,7 +338,7 @@ export class SendFlow extends LitElement {
       ></textarea>
       ${this.fee !== null
         ? html`<p class="msg">
-            Estimated fee: ${(this.fee / 1e8).toFixed(8)} DRK
+            Estimated fee: ${formatDrkAtomic(this.fee)} DRK
           </p>`
         : null}
       <div class="row">
