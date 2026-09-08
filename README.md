@@ -4,7 +4,7 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.00.007** (crate / Tauri semver **3.0.7** — leading zeros are not valid Cargo/Tauri versions). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
