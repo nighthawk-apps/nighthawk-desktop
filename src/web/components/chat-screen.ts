@@ -10,6 +10,12 @@ import {
   upsertDmContact,
   type DmContact,
 } from "../lib/dm-contacts";
+import {
+  hasFud,
+  isOwnNick,
+  lexChat,
+  peerNickIndex,
+} from "../lib/chat-chrome";
 
 /** Match mobile DarkfiChatDefaults.DEFAULT_PUBLIC_CHANNELS. */
 const CHANNELS = [
@@ -252,6 +258,25 @@ export class ChatScreen extends LitElement {
     .m:hover {
       background: rgba(255, 255, 255, 0.05);
     }
+    .m.mine .content {
+      color: var(--color-text-header);
+    }
+    .m.peer .content {
+      color: var(--color-text-body);
+    }
+    .m.encrypted {
+      padding: 6px 8px;
+      margin: 2px 0;
+    }
+    .m.encrypted.mine {
+      background: var(--color-accent-subtle-container);
+    }
+    .m.encrypted.peer {
+      background: var(--color-charcoal-raised);
+    }
+    .m.encrypted:hover {
+      background: var(--color-elevated);
+    }
     .m.system .nick {
       color: var(--color-text-muted);
     }
@@ -262,8 +287,12 @@ export class ChatScreen extends LitElement {
       -webkit-user-select: text;
       color: var(--color-text-body);
     }
+    .m .fud-hint {
+      grid-column: 2;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
     .nick {
-      color: var(--color-accent);
       font-weight: 600;
       text-align: left;
       white-space: nowrap;
@@ -271,6 +300,24 @@ export class ChatScreen extends LitElement {
       text-overflow: ellipsis;
       user-select: text;
       -webkit-user-select: text;
+    }
+    .nick.own {
+      color: var(--color-accent);
+    }
+    .nick.h0 { color: #7DADB9; }
+    .nick.h1 { color: #7AA3F3; }
+    .nick.h2 { color: #9BBDCF; }
+    .nick.h3 { color: #9DEA79; }
+    .nick.h4 { color: #A8B2BD; }
+    .nick.h5 { color: #9C5776; }
+    .nick.h6 { color: #4F8799; }
+    .nick.h7 { color: #C5CED6; }
+    a.chat-link {
+      color: var(--color-accent-muted);
+      text-decoration: underline;
+    }
+    .chat-fud {
+      color: var(--color-text-muted);
     }
     .composer {
       display: flex;
@@ -505,6 +552,25 @@ export class ChatScreen extends LitElement {
       navigator.clipboard.writeText(text);
     }
     this.showToast("Message copied to clipboard");
+  }
+
+  private renderChatBody(text: string) {
+    return lexChat(text).map((span) => {
+      switch (span.kind) {
+        case "url":
+          return html`<a
+            class="chat-link"
+            href=${span.value}
+            target="_blank"
+            rel="noopener noreferrer"
+            >${span.value}</a
+          >`;
+        case "fud":
+          return html`<span class="chat-fud">${span.value}</span>`;
+        default:
+          return html`${span.value}`;
+      }
+    });
   }
 
   private showToast(msg: string) {
@@ -905,10 +971,15 @@ export class ChatScreen extends LitElement {
         : null}
       <div class="msgs">
         <div class="msgs-inner">
-          ${this.messages.map(
-            (m) => html`
+          ${this.messages.map((m) => {
+            const own = isOwnNick(m.nick, this.nick);
+            const nickClass =
+              m.nick === "System" ? "nick" : own ? "nick own" : `nick h${peerNickIndex(m.nick)}`;
+            return html`
               <div
-                class="m ${m.nick === "System" ? "system" : ""}"
+                class="m ${m.nick === "System" ? "system" : own ? "mine" : "peer"} ${this.dmMode
+                  ? "encrypted"
+                  : ""}"
                 title="Click, long press, or right-click to copy"
                 @contextmenu=${(e: MouseEvent) => {
                   e.preventDefault();
@@ -918,11 +989,16 @@ export class ChatScreen extends LitElement {
                 @touchend=${() => this.handleTouchEnd()}
                 @touchcancel=${() => this.handleTouchEnd()}
               >
-                <span class="nick">&lt;${m.nick}&gt;</span>
-                <span class="content">${m.message}</span>
+                <span class=${nickClass}>&lt;${m.nick}&gt;</span>
+                <span class="content">${this.renderChatBody(m.message)}</span>
+                ${hasFud(m.message)
+                  ? html`<span class="fud-hint"
+                      >File transfer (fud) is not available in this build</span
+                    >`
+                  : null}
               </div>
-            `,
-          )}
+            `;
+          })}
         </div>
       </div>
       ${this.toastMessage

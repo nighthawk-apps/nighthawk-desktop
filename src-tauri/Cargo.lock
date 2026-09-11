@@ -5652,7 +5652,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nighthawk-app-desktop"
-version = "3.0.7"
+version = "3.0.8"
 dependencies = [
  "aes-gcm",
  "anyhow",
