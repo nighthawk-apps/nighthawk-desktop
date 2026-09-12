@@ -8,7 +8,7 @@
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
-- Same **`darkfi-mobile-ffi`** UniFFI crate as Android (tip `drk` turso/aegis256 wallet, UnifOMR sync, DarkIRC, send/receive)
+- Same **`darkfi-mobile-ffi`** UniFFI crate as Android (tip `drk` turso/aegis256 wallet, UnifOMR sync, DarkIRC, send/receive). Sent-tx session cache is FIFO-capped (10,000; updates do not refresh eviction). Reorg UI `txs_affected` is the wallet history row count (`block_height > rewind`), not CLI log-line length.
 - **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
 - **Proto version lockstep:** validates lightwalletd `proto_version` (1.x.x) and renders warning banner on protocol mismatches
 - Local **disk vault** (AES-GCM + PBKDF2) for seed + `wallet_pass` — **no app PIN**; the wallet opens automatically. Treat the data directory as sensitive (anyone with the files can decrypt).
@@ -76,6 +76,14 @@ pnpm tauri build --bundles app
 ```
 
 Without `CI=true`, `bundle_dmg.sh` fails in non-GUI / agent shells (it drives Finder via AppleScript). The binary and `.app` still compile; only the DMG step needs a real Finder session or `CI=true`.
+
+Host checks after Android FFI changes (this app path-depends on `new-nighthawk-android-wallet/rust/darkfi-mobile-ffi`):
+
+```bash
+cd src-tauri
+cargo test --release
+cargo build --release
+```
 
 ## xmrig sidecar
 
