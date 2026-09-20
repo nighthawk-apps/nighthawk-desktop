@@ -62,8 +62,8 @@ impl Default for Prefs {
             lightwallet_url: network.default_lwd().to_string(),
             darkfid_rpc_url: None,
             stratum_url: network.default_stratum().to_string(),
-            // Loopback LWD on this MacBook; enable Tor in settings for remote HTTPS.
-            use_tor: false,
+            // Privacy-first: Tor on by default. Loopback LWD still connects directly.
+            use_tor: true,
             tor_socks_port: 9150,
             mine_threads: 12,
             chat_nick: "nighthawk".to_string(),
@@ -92,6 +92,7 @@ mod tests {
     fn default_strict_omr_only_is_on() {
         assert!(default_strict_omr_only());
         assert!(Prefs::default().strict_omr_only);
+        assert!(Prefs::default().use_tor);
         let parsed: Prefs = serde_json::from_str(
             r#"{"network":"testnet","lightwalletUrl":"http://127.0.0.1:9067","stratumUrl":"x","useTor":true,"torSocksPort":9150,"mineThreads":1,"chatNick":"n","birthdayHeight":0}"#,
         )

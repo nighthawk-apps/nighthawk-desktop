@@ -27,7 +27,8 @@ impl Network {
 
     pub fn default_lwd(self) -> &'static str {
         match self {
-            // MacBook Pro loopback LWD (not Studio/ngrok).
+            // Loopback only — configure a real lightwalletd URL in Settings
+            // before using a remote network. Do not invent a production LWD.
             Network::Testnet => "http://127.0.0.1:9067",
             Network::Mainnet => "http://127.0.0.1:9067",
         }

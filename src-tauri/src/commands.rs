@@ -225,7 +225,7 @@ pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String>
         // LWD / Tor / TLS pin only apply at bootstrap — drop the open handle.
         *state.wallet.lock() = None;
         secure_store::clear_session();
-    } else if let Some(handle) = state.wallet.lock().as_ref() {
+    } else if let Some(handle) = state.wallet.lock().as_ref().cloned() {
         handle.set_strict_omr_only(prefs.strict_omr_only);
     }
     *state.prefs.lock() = prefs;
@@ -265,13 +265,13 @@ pub(crate) fn maybe_e2e_restore_from_file() {
         return;
     }
     let pass = secure_store::generate_wallet_pass();
-    match secure_store::create_vault(&mnemonic, &pass) {
+    match secure_store::create_vault(&mnemonic, &pass, false) {
         Ok(()) => tracing::info!("e2e restore: vault created"),
         Err(e) => tracing::error!("e2e restore failed: {e}"),
     }
 }
 
-fn persist_and_open(
+async fn persist_and_open(
     app: &AppHandle,
     state: &AppState,
     mnemonic: Vec<String>,
@@ -282,22 +282,30 @@ fn persist_and_open(
     if !validate_darkfi_mnemonic(mnemonic.clone()) {
         return Err("Invalid mnemonic".into());
     }
+    // Overwrite only when this profile has no vault yet (user confirmed create/restore).
+    let overwrite = !secure_store::wallet_exists();
     let mut prefs = state.prefs.lock().clone();
     prefs.network = network;
     prefs.birthday_height = birthday_height;
     if let Some(url) = lightwallet_url {
+        if !url.trim().is_empty() {
+            validate_lwd_url(&url)?;
+        }
         prefs.lightwallet_url = url;
     }
     prefs.stratum_url = network.default_stratum().to_string();
     let wallet_pass = secure_store::generate_wallet_pass();
-    secure_store::create_vault(&mnemonic, &wallet_pass).map_err(map_err)?;
+    secure_store::create_vault(&mnemonic, &wallet_pass, overwrite).map_err(map_err)?;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs.clone();
     *state.network.lock() = network;
     let _ = wallets::bootstrap_from_prefs();
 
     let cfg = build_bootstrap(mnemonic, network, wallet_pass, &prefs)?;
-    let handle = match open_handle(cfg) {
+    let handle = match tauri::async_runtime::spawn_blocking(move || open_handle(cfg))
+        .await
+        .map_err(|e| format!("Wallet open interrupted: {e}"))?
+    {
         Ok(h) => h,
         Err(e) => {
             secure_store::clear_session();
@@ -310,7 +318,7 @@ fn persist_and_open(
 }
 
 #[tauri::command]
-pub fn create_wallet(
+pub async fn create_wallet(
     app: AppHandle,
     state: State<'_, AppState>,
     mnemonic: Vec<String>,
@@ -327,10 +335,11 @@ pub fn create_wallet(
         birthday_height,
         lightwallet_url,
     )
+    .await
 }
 
 #[tauri::command]
-pub fn restore_wallet(
+pub async fn restore_wallet(
     app: AppHandle,
     state: State<'_, AppState>,
     mnemonic: Vec<String>,
@@ -347,6 +356,7 @@ pub fn restore_wallet(
         birthday_height,
         lightwallet_url,
     )
+    .await
 }
 
 /// Open an existing vault (no PIN). Called automatically on app start.
@@ -380,60 +390,73 @@ pub async fn open_wallet(
     Ok(())
 }
 
-fn with_wallet<T>(
-    state: &AppState,
-    f: impl FnOnce(&DarkfiWalletHandle) -> Result<T, String>,
-) -> Result<T, String> {
-    let guard = state.wallet.lock();
-    let w = guard.as_ref().ok_or_else(|| "Wallet locked".to_string())?;
-    f(w)
+fn wallet_arc(state: &AppState) -> Result<Arc<DarkfiWalletHandle>, String> {
+    state
+        .wallet
+        .lock()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "Wallet locked".to_string())
+}
+
+async fn with_wallet_blocking<T, F>(state: &AppState, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<DarkfiWalletHandle>) -> Result<T, String> + Send + 'static,
+{
+    let handle = wallet_arc(state)?;
+    tauri::async_runtime::spawn_blocking(move || f(handle))
+        .await
+        .map_err(|e| format!("Wallet operation interrupted: {e}"))?
 }
 
 #[tauri::command]
-pub fn wallet_balance(state: State<'_, AppState>) -> Result<i64, String> {
-    with_wallet(&state, |w| w.confirmed_balance_atomic().map_err(ffi_err))
+pub async fn wallet_balance(state: State<'_, AppState>) -> Result<i64, String> {
+    with_wallet_blocking(&state, |w| w.confirmed_balance_atomic().map_err(ffi_err)).await
 }
 
 #[tauri::command]
-pub fn wallet_address(state: State<'_, AppState>) -> Result<String, String> {
-    with_wallet(&state, |w| w.primary_deposit_address().map_err(ffi_err))
+pub async fn wallet_address(state: State<'_, AppState>) -> Result<String, String> {
+    with_wallet_blocking(&state, |w| w.primary_deposit_address().map_err(ffi_err)).await
 }
 
 #[tauri::command]
-pub fn wallet_addresses(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    with_wallet(&state, |w| w.list_addresses().map_err(ffi_err))
+pub async fn wallet_addresses(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    with_wallet_blocking(&state, |w| w.list_addresses().map_err(ffi_err)).await
 }
 
 #[tauri::command]
-pub fn generate_address(state: State<'_, AppState>) -> Result<String, String> {
-    with_wallet(&state, |w| w.generate_new_address().map_err(ffi_err))
+pub async fn generate_address(state: State<'_, AppState>) -> Result<String, String> {
+    with_wallet_blocking(&state, |w| w.generate_new_address().map_err(ffi_err)).await
 }
 
 #[tauri::command]
-pub fn wallet_refresh(state: State<'_, AppState>) -> Result<SyncSnapshotDto, String> {
-    with_wallet(&state, |w| {
+pub async fn wallet_refresh(state: State<'_, AppState>) -> Result<SyncSnapshotDto, String> {
+    with_wallet_blocking(&state, |w| {
         let s = w.refresh_now().map_err(ffi_err)?;
         Ok(SyncSnapshotDto {
             scanned_blocks: s.scanned_blocks,
             chain_tip: s.chain_tip,
         })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn wallet_sync_snapshot(state: State<'_, AppState>) -> Result<SyncSnapshotDto, String> {
-    with_wallet(&state, |w| {
+pub async fn wallet_sync_snapshot(state: State<'_, AppState>) -> Result<SyncSnapshotDto, String> {
+    with_wallet_blocking(&state, |w| {
         let s = w.sync_snapshot().map_err(ffi_err)?;
         Ok(SyncSnapshotDto {
             scanned_blocks: s.scanned_blocks,
             chain_tip: s.chain_tip,
         })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn wallet_light_sync(state: State<'_, AppState>) -> Result<LightSyncDto, String> {
-    with_wallet(&state, |w| {
+pub async fn wallet_light_sync(state: State<'_, AppState>) -> Result<LightSyncDto, String> {
+    with_wallet_blocking(&state, |w| {
         let s = w.light_sync_snapshot();
         Ok(LightSyncDto {
             status: s.status,
@@ -449,11 +472,12 @@ pub fn wallet_light_sync(state: State<'_, AppState>) -> Result<LightSyncDto, Str
             proto_version_mismatch: s.proto_version_mismatch,
         })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn wallet_list_txs(state: State<'_, AppState>) -> Result<Vec<TxDto>, String> {
-    with_wallet(&state, |w| {
+pub async fn wallet_list_txs(state: State<'_, AppState>) -> Result<Vec<TxDto>, String> {
+    with_wallet_blocking(&state, |w| {
         let list = w.list_transactions().map_err(ffi_err)?;
         Ok(list
             .into_iter()
@@ -466,10 +490,11 @@ pub fn wallet_list_txs(state: State<'_, AppState>) -> Result<Vec<TxDto>, String>
             })
             .collect())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn estimate_fee(
+pub async fn estimate_fee(
     state: State<'_, AppState>,
     recipient: String,
     amount: String,
@@ -477,27 +502,29 @@ pub fn estimate_fee(
     token_id: Option<String>,
 ) -> Result<i64, String> {
     // Fee tiers are not applied on build/broadcast yet — return the fee send uses.
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         w.estimate_transfer_fee(recipient, amount, token_id, memo)
             .map_err(ffi_err)
     })
+    .await
 }
 
 #[tauri::command]
-pub fn send_drk(
+pub async fn send_drk(
     state: State<'_, AppState>,
     recipient: String,
     amount: String,
     memo: Option<String>,
     token_id: Option<String>,
 ) -> Result<String, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         let bytes = w
             .build_transfer(recipient.clone(), amount, token_id, memo.clone())
             .map_err(ffi_err)?;
         w.broadcast_transfer(bytes, memo, Some(recipient))
             .map_err(ffi_err)
     })
+    .await
 }
 
 #[derive(Serialize)]
@@ -509,8 +536,8 @@ pub struct TokenBalanceDto {
 }
 
 #[tauri::command]
-pub fn list_token_balances(state: State<'_, AppState>) -> Result<Vec<TokenBalanceDto>, String> {
-    with_wallet(&state, |w| {
+pub async fn list_token_balances(state: State<'_, AppState>) -> Result<Vec<TokenBalanceDto>, String> {
+    with_wallet_blocking(&state, |w| {
         let list = w.list_token_balances().map_err(ffi_err)?;
         Ok(list
             .into_iter()
@@ -521,22 +548,23 @@ pub fn list_token_balances(state: State<'_, AppState>) -> Result<Vec<TokenBalanc
             })
             .collect())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn transaction_payment_memo(
+pub async fn transaction_payment_memo(
     state: State<'_, AppState>,
     tx_hash: String,
 ) -> Result<Option<String>, String> {
-    with_wallet(&state, |w| w.transaction_payment_memo(tx_hash).map_err(ffi_err))
+    with_wallet_blocking(&state, |w| w.transaction_payment_memo(tx_hash).map_err(ffi_err)).await
 }
 
 #[tauri::command]
-pub fn transaction_recipient(
+pub async fn transaction_recipient(
     state: State<'_, AppState>,
     tx_hash: String,
 ) -> Result<Option<String>, String> {
-    with_wallet(&state, |w| w.transaction_recipient(tx_hash).map_err(ffi_err))
+    with_wallet_blocking(&state, |w| w.transaction_recipient(tx_hash).map_err(ffi_err)).await
 }
 
 #[derive(Serialize)]
@@ -588,8 +616,8 @@ pub struct DaoProposalDetailDto {
 }
 
 #[tauri::command]
-pub fn list_daos(state: State<'_, AppState>) -> Result<Vec<DaoSummaryDto>, String> {
-    with_wallet(&state, |w| {
+pub async fn list_daos(state: State<'_, AppState>) -> Result<Vec<DaoSummaryDto>, String> {
+    with_wallet_blocking(&state, |w| {
         let list = w.list_daos().map_err(ffi_err)?;
         Ok(list
             .into_iter()
@@ -607,14 +635,15 @@ pub fn list_daos(state: State<'_, AppState>) -> Result<Vec<DaoSummaryDto>, Strin
             })
             .collect())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn list_proposals(
+pub async fn list_proposals(
     state: State<'_, AppState>,
     dao_name: Option<String>,
 ) -> Result<Vec<DaoProposalSummaryDto>, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         let list = w.list_proposals(dao_name).map_err(ffi_err)?;
         Ok(list
             .into_iter()
@@ -632,14 +661,15 @@ pub fn list_proposals(
             })
             .collect())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_proposal(
+pub async fn get_proposal(
     state: State<'_, AppState>,
     proposal_bulla_b58: String,
 ) -> Result<DaoProposalDetailDto, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         let p = w.get_proposal(proposal_bulla_b58).map_err(ffi_err)?;
         Ok(DaoProposalDetailDto {
             proposal_bulla_b58: p.proposal_bulla_b58,
@@ -657,10 +687,11 @@ pub fn get_proposal(
             has_plaintext_data: p.has_plaintext_data,
         })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn dao_propose_transfer(
+pub async fn dao_propose_transfer(
     state: State<'_, AppState>,
     dao_name: String,
     duration_blockwindows: u64,
@@ -668,29 +699,31 @@ pub fn dao_propose_transfer(
     token_id: Option<String>,
     recipient_address: String,
 ) -> Result<String, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         w.dao_propose_transfer(dao_name, duration_blockwindows, amount, token_id, recipient_address)
             .map_err(ffi_err)
     })
+    .await
 }
 
 #[tauri::command]
-pub fn dao_vote(
+pub async fn dao_vote(
     state: State<'_, AppState>,
     proposal_bulla_b58: String,
     vote_yes: bool,
 ) -> Result<String, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         w.dao_vote(proposal_bulla_b58, vote_yes).map_err(ffi_err)
     })
+    .await
 }
 
 #[tauri::command]
-pub fn handle_reorg_recovery(
+pub async fn handle_reorg_recovery(
     state: State<'_, AppState>,
     rewind_to_height: u32,
 ) -> Result<ReorgDto, String> {
-    with_wallet(&state, |w| {
+    with_wallet_blocking(&state, |w| {
         let e = w.handle_reorg_recovery(rewind_to_height).map_err(ffi_err)?;
         Ok(ReorgDto {
             detected_at_height: e.detected_at_height,
@@ -700,6 +733,7 @@ pub fn handle_reorg_recovery(
             summary_message: e.summary_message,
         })
     })
+    .await
 }
 
 #[tauri::command]
@@ -808,8 +842,24 @@ pub fn wallets_list() -> Result<WalletProfilesDto, String> {
 }
 
 #[tauri::command]
-pub fn wallets_create(label: String) -> Result<wallets::WalletProfile, String> {
-    wallets::create_profile(label).map_err(map_err)
+pub fn wallets_create(
+    state: State<'_, AppState>,
+    label: String,
+) -> Result<wallets::WalletProfile, String> {
+    {
+        let mut miner = state.miner.lock();
+        if let Some(mut m) = miner.take() {
+            let _ = m.child.kill();
+            let _ = m.child.wait();
+        }
+    }
+    *state.wallet.lock() = None;
+    secure_store::clear_session();
+    let profile = wallets::create_profile(label).map_err(map_err)?;
+    let mut prefs = state.prefs.lock().clone();
+    prefs.active_wallet_id = profile.id.clone();
+    *state.prefs.lock() = prefs;
+    Ok(profile)
 }
 
 #[tauri::command]
@@ -844,14 +894,19 @@ pub fn wallets_remove(wallet_id: String) -> Result<Vec<wallets::WalletProfile>, 
 }
 
 #[tauri::command]
-pub fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let network = *state.network.lock();
     let prefs = state.prefs.lock().clone();
     ensure_dirs(network).map_err(map_err)?;
     let path = darkirc_path(network).to_string_lossy().to_string();
-    let cb: Option<Box<dyn DarkircEventCallback>> =
-        Some(Box::new(TauriChatCb { app: app.clone() }));
-    start_darkirc(path, prefs.use_tor, prefs.tor_socks_port, cb).map_err(ffi_err)
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cb: Option<Box<dyn DarkircEventCallback>> =
+            Some(Box::new(TauriChatCb { app }));
+        start_darkirc(path, prefs.use_tor, prefs.tor_socks_port, cb).map_err(ffi_err)
+    })
+    .await
+    .map_err(|e| format!("Chat start interrupted: {e}"))?
 }
 
 #[tauri::command]
@@ -898,7 +953,7 @@ pub fn set_chat_nick(
     let sanitized = sanitize_nickname(nickname.trim())?;
     let mut prefs = state.prefs.lock();
     prefs.chat_nick = sanitized;
-    save_prefs(&prefs).map_err(|e| e.to_string())?;
+    save_prefs(&prefs).map_err(map_err)?;
     Ok(())
 }
 
@@ -920,7 +975,7 @@ pub fn chat_send(
                     let sanitized = sanitize_nickname(arg)?;
                     let mut prefs = state.prefs.lock();
                     prefs.chat_nick = sanitized;
-                    save_prefs(&prefs).map_err(|e| e.to_string())?;
+                    save_prefs(&prefs).map_err(map_err)?;
                     return Ok(());
                 }
                 return Err("Invalid nickname. Usage: /nick <name> (1–24 alphanumeric/underscore characters)".into());
@@ -1006,13 +1061,12 @@ fn xmrig_bin(app: &AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn mine_status(state: State<'_, AppState>) -> Result<MineStatusDto, String> {
     let prefs = state.prefs.lock().clone();
-    let mut miner = state.miner.lock();
-    let address = state
-        .wallet
-        .lock()
+    let handle = state.wallet.lock().as_ref().cloned();
+    let address = handle
         .as_ref()
         .and_then(|w| w.primary_deposit_address().ok())
         .unwrap_or_default();
+    let mut miner = state.miner.lock();
 
     if let Some(m) = miner.as_mut() {
         // Reap exited child
@@ -1059,7 +1113,7 @@ pub fn mine_status(state: State<'_, AppState>) -> Result<MineStatusDto, String> 
 }
 
 #[tauri::command]
-pub fn mine_start(
+pub async fn mine_start(
     app: AppHandle,
     state: State<'_, AppState>,
     threads: Option<u32>,
@@ -1080,13 +1134,12 @@ pub fn mine_start(
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs.clone();
 
-    let address = state
-        .wallet
-        .lock()
-        .as_ref()
-        .ok_or_else(|| "Unlock wallet before mining".to_string())?
-        .primary_deposit_address()
-        .map_err(ffi_err)?;
+    let handle = wallet_arc(&state)?;
+    let address = tauri::async_runtime::spawn_blocking(move || {
+        handle.primary_deposit_address().map_err(ffi_err)
+    })
+    .await
+    .map_err(|e| format!("Wallet operation interrupted: {e}"))??;
 
     let stratum = prefs.stratum_url.clone();
     let log_path = crate::paths::app_root().join("xmrig.log");

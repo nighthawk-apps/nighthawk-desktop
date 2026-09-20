@@ -310,9 +310,9 @@ export class SettingsScreen extends LitElement {
           Strict UnifOMR sync (no trial-decrypt fallback)
         </label>
         <p class="msg">
-          Off by default so you can receive from non-UnifOMR wallets (e.g.
-          <code>drk</code>). When on, only payments with UnifOMR clues are discovered —
+          On by default: only payments with UnifOMR clues are discovered —
           faster and more private, but <code>drk</code> sends may not appear.
+          Turn off to receive from non-UnifOMR wallets (e.g. <code>drk</code>).
         </p>
         <div class="row">
           <button @click=${this.save}>Save</button>
@@ -401,7 +401,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop 0.1.0 — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop 3.0.14 — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

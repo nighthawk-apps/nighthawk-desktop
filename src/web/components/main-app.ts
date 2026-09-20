@@ -5,7 +5,11 @@ import "./onboarding-flow";
 
 @customElement("main-app")
 export class MainApp extends LitElement {
-  @state() private phase: "loading" | "onboarding" | "ready" = "loading";
+  @state() private phase:
+    | "loading"
+    | "onboarding"
+    | "unlock-error"
+    | "ready" = "loading";
   @state() private activeTab = "wallet";
   @state() private network = "testnet";
   @state() private sync = "";
@@ -43,14 +47,26 @@ export class MainApp extends LitElement {
       max-width: 320px;
       text-align: center;
     }
+    button {
+      margin-top: 8px;
+      padding: 10px 14px;
+      border: none;
+      border-radius: var(--border-radius-md, 8px);
+      background: var(--color-accent);
+      color: var(--color-on-accent);
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
   `;
 
   async connectedCallback() {
     super.connectedCallback();
     this.phase = "loading";
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    let exists = false;
     try {
-      const exists = await api.walletExists();
+      exists = await api.walletExists();
       const status = await api.appStatus();
       this.network = status.network;
       if (!exists) {
@@ -66,8 +82,23 @@ export class MainApp extends LitElement {
       this.network = prefs.network;
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
-      // Broken / PIN-era vault → start fresh.
-      this.phase = "onboarding";
+      // Existing vault must never fall through to Create (that overwrites vault.dat).
+      this.phase = exists ? "unlock-error" : "onboarding";
+    }
+  }
+
+  private async retryUnlock() {
+    this.error = "";
+    this.phase = "loading";
+    try {
+      await api.openWallet();
+      await this.ensureScreens();
+      this.phase = "ready";
+      const prefs = await api.getPrefs();
+      this.network = prefs.network;
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+      this.phase = "unlock-error";
     }
   }
 
@@ -117,6 +148,13 @@ export class MainApp extends LitElement {
       return html`<div class="center">
         Starting Nighthawk…
         ${this.error ? html`<p class="err">${this.error}</p>` : null}
+      </div>`;
+    }
+    if (this.phase === "unlock-error") {
+      return html`<div class="center">
+        <p class="err">Could not open the existing wallet.</p>
+        ${this.error ? html`<p class="err">${this.error}</p>` : null}
+        <button @click=${() => this.retryUnlock()}>Retry</button>
       </div>`;
     }
     if (this.phase === "onboarding") {

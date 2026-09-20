@@ -2233,7 +2233,7 @@ dependencies = [
 
 [[package]]
 name = "darkfi-mobile-ffi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "android_logger",
  "arti-client",
@@ -2242,6 +2242,7 @@ dependencies = [
  "bip39",
  "blake3",
  "bs58",
+ "chacha20poly1305",
  "crypto_box",
  "darkfi",
  "darkfi-sdk",
@@ -2278,7 +2279,7 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tor-rtcompat",
- "tower 0.4.13",
+ "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
@@ -5652,7 +5653,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nighthawk-app-desktop"
-version = "3.0.13"
+version = "3.0.14"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -11004,7 +11005,6 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
- "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",

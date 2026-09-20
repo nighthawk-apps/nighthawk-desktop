@@ -258,7 +258,12 @@ fn write_meta(meta: &VaultMeta) -> Result<()> {
     fs::write(meta_path(), s).context("write vault meta")
 }
 
-fn write_vault_files(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
+fn write_vault_files(mnemonic: &[String], wallet_pass: &str, overwrite: bool) -> Result<()> {
+    if vault_ready() && !overwrite {
+        return Err(anyhow!(
+            "Wallet vault already exists — refusing to overwrite. Wipe or switch profile first."
+        ));
+    }
     ensure_vault_dir()?;
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
@@ -344,9 +349,13 @@ pub fn generate_wallet_pass() -> String {
     B64.encode(buf)
 }
 
-/// Persist a new wallet vault (create / restore). Replaces any existing vault.
-pub fn create_vault(mnemonic: &[String], wallet_pass: &str) -> Result<()> {
-    write_vault_files(mnemonic, wallet_pass)?;
+/// Persist a new wallet vault (create / restore).
+///
+/// Refuses to replace an existing vault unless `overwrite` is true.
+/// Only wipe-then-recreate / a confirmed create on a fresh profile may pass
+/// `overwrite = true`.
+pub fn create_vault(mnemonic: &[String], wallet_pass: &str, overwrite: bool) -> Result<()> {
+    write_vault_files(mnemonic, wallet_pass, overwrite)?;
     *session().lock() = Some(Session {
         mnemonic: mnemonic.to_vec(),
         wallet_pass: wallet_pass.to_string(),
