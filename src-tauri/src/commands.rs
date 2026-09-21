@@ -86,6 +86,7 @@ pub struct ChatMessageDto {
     pub nick: String,
     pub message: String,
     pub timestamp: u64,
+    pub is_outgoing: bool,
 }
 
 struct TauriChatCb {
@@ -100,6 +101,7 @@ impl DarkircEventCallback for TauriChatCb {
         nick: String,
         message: String,
         timestamp: u64,
+        is_outgoing: bool,
     ) {
         let _ = self.app.emit(
             "chat://message",
@@ -109,6 +111,7 @@ impl DarkircEventCallback for TauriChatCb {
                 nick,
                 message,
                 timestamp,
+                is_outgoing,
             },
         );
     }

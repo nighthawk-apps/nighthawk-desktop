@@ -3,7 +3,7 @@
 **Audit date:** 2026-09-20  
 **Model:** Claude Fable 5.1  
 **Review date:** 2026-09-21  
-**Shipped revision:** `7ca773a` (v3.0.14)  
+**Shipped revision:** `7ca773a` (v3.0.15)  
 
 Full auditor transcript:
 
@@ -18,7 +18,8 @@ Full auditor transcript:
 | D1 | openWallet fail → Create overwrites vault | **FIXED** | `secure_store.rs` `write_vault_files(..., overwrite)`; refuses if vault exists |
 | D2 | Sync / prove on main thread freezes UI | **FIXED** | Wallet open / sync / prove via `spawn_blocking` in `commands.rs` (2026-09-21: added missing `move` on DAO/reorg closures so `cargo check --release` passes) |
 | D3 | `remove_profile` path traversal | **FIXED** | `wallets.rs` canonicalize + root containment check |
-| D4 | create doesn’t clear old wallet/session | **PARTIAL** | Overwrite guard landed; confirm create path clears session on switch |
+| D4 | create doesn’t clear old wallet/session | **FIXED** | Overwrite guard landed; `wallets_create` terminates miner, clears wallet instance and resets session (`commands.rs:849-857`) |
+| D4.1 | Chat nick-spoofing via unauthenticated sender | **FIXED** | `ChatMessageDto` includes `isOutgoing` from FFI daemon; UI prioritizes flag over nick string comparison |
 | D5 | loopback LWD + `use_tor: false` defaults | **FIXED** | `prefs.rs` `use_tor: true` (default + test) |
 
 ## SHOULD-FIX (deferred)

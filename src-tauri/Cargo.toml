@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.0.14"
+version = "3.0.15"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2021"

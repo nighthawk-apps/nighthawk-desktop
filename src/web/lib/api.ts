@@ -115,6 +115,7 @@ export interface ChatMessage {
   nick: string;
   message: string;
   timestamp: number;
+  isOutgoing?: boolean;
 }
 
 export interface ReorgEvent {

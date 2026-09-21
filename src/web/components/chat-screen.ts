@@ -514,6 +514,7 @@ export class ChatScreen extends LitElement {
       nick: "System",
       message,
       timestamp: Date.now(),
+      isOutgoing: false,
     };
     const key = chanKey(channel);
     const prior = this.channelMessages[key] ?? [];
@@ -861,6 +862,7 @@ export class ChatScreen extends LitElement {
       nick,
       message,
       timestamp: Date.now(),
+      isOutgoing: true,
     };
     // Don't add to seenEventIds — network echo uses a different event id.
     const key = chanKey(this.channel);
@@ -972,7 +974,10 @@ export class ChatScreen extends LitElement {
       <div class="msgs">
         <div class="msgs-inner">
           ${this.messages.map((m) => {
-            const own = isOwnNick(m.nick, this.nick);
+            const own =
+              typeof m.isOutgoing === "boolean"
+                ? m.isOutgoing
+                : isOwnNick(m.nick, this.nick);
             const nickClass =
               m.nick === "System" ? "nick" : own ? "nick own" : `nick h${peerNickIndex(m.nick)}`;
             return html`
