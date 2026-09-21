@@ -699,7 +699,7 @@ pub async fn dao_propose_transfer(
     token_id: Option<String>,
     recipient_address: String,
 ) -> Result<String, String> {
-    with_wallet_blocking(&state, |w| {
+    with_wallet_blocking(&state, move |w| {
         w.dao_propose_transfer(dao_name, duration_blockwindows, amount, token_id, recipient_address)
             .map_err(ffi_err)
     })
@@ -712,7 +712,7 @@ pub async fn dao_vote(
     proposal_bulla_b58: String,
     vote_yes: bool,
 ) -> Result<String, String> {
-    with_wallet_blocking(&state, |w| {
+    with_wallet_blocking(&state, move |w| {
         w.dao_vote(proposal_bulla_b58, vote_yes).map_err(ffi_err)
     })
     .await
@@ -723,7 +723,7 @@ pub async fn handle_reorg_recovery(
     state: State<'_, AppState>,
     rewind_to_height: u32,
 ) -> Result<ReorgDto, String> {
-    with_wallet_blocking(&state, |w| {
+    with_wallet_blocking(&state, move |w| {
         let e = w.handle_reorg_recovery(rewind_to_height).map_err(ffi_err)?;
         Ok(ReorgDto {
             detected_at_height: e.detected_at_height,
