@@ -1,7 +1,7 @@
 {
   "name": "nighthawk-app-desktop",
   "private": true,
-  "version": "3.00.015",
+  "version": "3.00.016",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,9 +10,9 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-shell": "^2",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-shell": "^2.5.0",
     "@types/qrcode": "^1.5.6",
     "jsqr": "^1.4.0",
     "lit": "^3.3.3",
@@ -23,8 +23,8 @@
     "pnpm": ">=9"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3"
+    "@tauri-apps/cli": "^2.12.3",
+    "typescript": "~5.9.3",
+    "vite": "^6.4.4"
   }
 }

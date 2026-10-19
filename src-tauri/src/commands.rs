@@ -285,8 +285,11 @@ async fn persist_and_open(
     if !validate_darkfi_mnemonic(mnemonic.clone()) {
         return Err("Invalid mnemonic".into());
     }
-    // Overwrite only when this profile has no vault yet (user confirmed create/restore).
-    let overwrite = !secure_store::wallet_exists();
+    // An existing vault is opened, never replaced, from the create/restore screen.
+    if secure_store::wallet_exists() {
+        return open_existing_wallet(app, state).await;
+    }
+    let overwrite = false;
     let mut prefs = state.prefs.lock().clone();
     prefs.network = network;
     prefs.birthday_height = birthday_height;
@@ -368,6 +371,10 @@ pub async fn open_wallet(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    open_existing_wallet(&app, state.inner()).await
+}
+
+async fn open_existing_wallet(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let _ = wallets::bootstrap_from_prefs();
     if state.wallet.lock().is_some() {
         return Ok(());
@@ -388,7 +395,7 @@ pub async fn open_wallet(
     let handle = tauri::async_runtime::spawn_blocking(move || open_handle(cfg))
         .await
         .map_err(|e| format!("Wallet open interrupted: {e}"))??;
-    attach_reorg_callback(&app, &handle);
+    attach_reorg_callback(app, &handle);
     *state.wallet.lock() = Some(handle);
     Ok(())
 }
@@ -913,8 +920,10 @@ pub async fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<()
 }
 
 #[tauri::command]
-pub fn chat_stop() -> Result<(), String> {
-    stop_darkirc().map_err(ffi_err)
+pub async fn chat_stop() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| stop_darkirc().map_err(ffi_err))
+        .await
+        .map_err(|e| format!("Chat stop interrupted: {e}"))?
 }
 
 #[tauri::command]
@@ -961,7 +970,7 @@ pub fn set_chat_nick(
 }
 
 #[tauri::command]
-pub fn chat_send(
+pub async fn chat_send(
     state: State<'_, AppState>,
     channel: String,
     message: String,
@@ -986,8 +995,11 @@ pub fn chat_send(
             "/me" => {
                 if !arg.is_empty() {
                     let action_msg = format!("* {} {}", nick, arg);
-                    send_chat_message(channel, nick, action_msg).map_err(ffi_err)?;
-                    return Ok(());
+                    return tauri::async_runtime::spawn_blocking(move || {
+                        send_chat_message(channel, nick, action_msg).map_err(ffi_err)
+                    })
+                    .await
+                    .map_err(|e| format!("Chat send interrupted: {e}"))?;
                 }
                 return Err("Usage: /me <action>".into());
             }
@@ -996,8 +1008,13 @@ pub fn chat_send(
                 if msg_parts.len() == 2 {
                     let target = msg_parts[0].trim();
                     let text = msg_parts[1].trim();
-                    send_chat_message(target.to_string(), nick, text.to_string()).map_err(ffi_err)?;
-                    return Ok(());
+                    let target = target.to_string();
+                    let text = text.to_string();
+                    return tauri::async_runtime::spawn_blocking(move || {
+                        send_chat_message(target, nick, text).map_err(ffi_err)
+                    })
+                    .await
+                    .map_err(|e| format!("Chat send interrupted: {e}"))?;
                 }
                 return Err("Usage: /msg <target> <message>".into());
             }
@@ -1010,7 +1027,30 @@ pub fn chat_send(
         }
     }
 
-    send_chat_message(channel, nick, body.to_string()).map_err(ffi_err)
+    let body = body.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        send_chat_message(channel, nick, body).map_err(ffi_err)
+    })
+    .await
+    .map_err(|e| format!("Chat send interrupted: {e}"))?
+}
+
+/// Read at most `max_bytes` from the end of a miner log so status polls
+/// do not load an unbounded file into memory.
+fn read_log_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).ok()?;
+    if start > 0 {
+        if let Some(idx) = buf.find('\n') {
+            buf.drain(..=idx);
+        }
+    }
+    Some(buf)
 }
 
 fn parse_hashrate(log: &str) -> Option<f64> {
@@ -1092,7 +1132,7 @@ pub fn mine_status(state: State<'_, AppState>) -> Result<MineStatusDto, String> 
 
     let last_log = log_path
         .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_log_tail(p, 64 * 1024))
         .unwrap_or_default();
     let last_tail: String = last_log
         .lines()

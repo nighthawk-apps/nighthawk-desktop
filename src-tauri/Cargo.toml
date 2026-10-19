@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.0.15"
+version = "3.0.16"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2021"
@@ -37,11 +37,9 @@ blake3 = "1.8"
 argon2 = "0.5"
 url = "2"
 
-# Same UniFFI crate as mobile / other clients.
-# Use the real android-tree path (not the GitHub/darkfi-mobile-ffi symlink):
-# relative `../../third_party/darkfi` inside the FFI crate resolves incorrectly
-# when Cargo follows the symlink from /Users/adi/GitHub/darkfi-mobile-ffi.
-darkfi-mobile-ffi = { path = "../../new-nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
+# Same UniFFI crate as the Android wallet. Path is the real tree, not a
+# symlink: Cargo resolves `third_party/darkfi` relative to the crate directory.
+darkfi-mobile-ffi = { path = "../../nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
 async-stream = "0.3.6"
 
 [patch.crates-io]

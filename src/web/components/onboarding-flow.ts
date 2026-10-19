@@ -11,7 +11,32 @@ export class OnboardingFlow extends LitElement {
   @state() private birthday = 0;
   @state() private error = "";
   @state() private busy = false;
+  @state() private checkingExisting = true;
   private mode: "create" | "restore" = "create";
+
+  override async connectedCallback() {
+    super.connectedCallback();
+    await this.enterExistingWallet();
+  }
+
+  /** Vault on disk means this device already has a wallet — open it. */
+  private async enterExistingWallet(): Promise<boolean> {
+    try {
+      if (!(await api.walletExists())) {
+        this.checkingExisting = false;
+        return false;
+      }
+      await api.openWallet();
+      this.dispatchEvent(
+        new CustomEvent("wallet-ready", { bubbles: true, composed: true }),
+      );
+      return true;
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+      this.checkingExisting = false;
+      return false;
+    }
+  }
 
   static styles = css`
     :host {
@@ -140,12 +165,18 @@ export class OnboardingFlow extends LitElement {
       );
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
+      if (/already exists/i.test(this.error)) {
+        await this.enterExistingWallet();
+      }
     } finally {
       this.busy = false;
     }
   }
 
   render() {
+    if (this.checkingExisting) {
+      return html`<div class="card"><h1>Nighthawk</h1><p>Opening wallet…</p></div>`;
+    }
     return html`
       <div class="card">
         ${this.step === "welcome"
