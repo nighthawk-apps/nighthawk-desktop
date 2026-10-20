@@ -6,6 +6,7 @@ import {
   type Prefs,
   type WalletProfiles,
 } from "../lib/api";
+import { applyTheme, currentTheme, type NighthawkTheme } from "../lib/theme";
 
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
@@ -16,6 +17,7 @@ export class SettingsScreen extends LitElement {
   @state() private error = "";
   @state() private artiRunning = false;
   @state() private wallets: WalletProfiles | null = null;
+  @state() private theme: NighthawkTheme = currentTheme();
   @state() private newWalletLabel = "";
   @state() private renameLabel = "";
 
@@ -234,6 +236,21 @@ export class SettingsScreen extends LitElement {
     const p = this.prefs;
     if (!p) return html`<p>Loading…</p>`;
     return html`
+      <div class="card">
+        <h3>Appearance</h3>
+        <label>Theme</label>
+        <select
+          .value=${this.theme}
+          @change=${(e: Event) => {
+            const next = (e.target as HTMLSelectElement).value as NighthawkTheme;
+            this.theme = next;
+            applyTheme(next);
+          }}
+        >
+          <option value="stealth">Stealth — dark, Outfit and Source Sans 3</option>
+          <option value="paper">Paper — white, Source Serif 4 and Source Sans 3</option>
+        </select>
+      </div>
       <div class="card">
         <h3>Network</h3>
         <select
