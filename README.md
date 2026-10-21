@@ -4,7 +4,7 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-**3.00.017** (crate / Tauri semver **3.0.17** — leading zeros are not valid Cargo/Tauri versions). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.00.018** (crate / Tauri semver **3.0.18** — leading zeros are not valid Cargo/Tauri versions). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
@@ -14,7 +14,8 @@
 - Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service). Legacy v2 vaults used a static PBKDF2 constant. **No app PIN**; the wallet opens automatically. Treat the data directory as sensitive.
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book
-- Bundled **xmrig** mining to your deposit address via local darkfid stratum
+- Bundled **xmrig** only. The Mine tab refuses a binary whose SHA-256 is not a shipped Nighthawk build, and it no longer falls back to a system `xmrig`. Stratum and other remote endpoints reject private and link-local hosts; loopback stays allowed for a local darkfid
+- Wallet, chat, and vault commands run against the wallet that is open in the app, not a process-global handle
 - **Tor on by default** for remote lightwalletd / chat (embedded Arti). Default testnet LWD is loopback `http://127.0.0.1:9067`; switch URL in Settings for a remote pin.
 - **Strict UnifOMR sync (default on):** only payments with UnifOMR clues are discovered. Turn it off in Settings to trial-decrypt compact blocks and receive from non-UnifOMR wallets (e.g. upstream `drk`).
 - UnifOMR Param2 limits: [`docs/unifomr_mvp_limits.md`](docs/unifomr_mvp_limits.md)
@@ -94,7 +95,7 @@ Place platform binaries under `src-tauri/binaries/` named for Tauri externals:
 - `xmrig-x86_64-unknown-linux-gnu`
 - `xmrig-x86_64-pc-windows-msvc.exe`
 
-Or install system `xmrig` — the app can fall back to `/opt/homebrew/bin/xmrig` on macOS.
+The app checks the file against the SHA-256 allowlist in `src-tauri/src/commands.rs` before it starts. A Homebrew or other system `xmrig` is not used.
 
 ```bash
 ./scripts/fetch-xmrig.sh

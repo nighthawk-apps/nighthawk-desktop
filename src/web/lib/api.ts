@@ -153,7 +153,6 @@ export interface DaoProposalSummary {
 }
 
 export interface DmKeypair {
-  secretB58: string;
   publicB58: string;
 }
 
@@ -262,16 +261,10 @@ export const api = {
 
   dmGenerateKeypair: () => invokeCmd<DmKeypair>("dm_generate_keypair"),
   dmLoadKeypair: () => invokeCmd<DmKeypair | null>("dm_load_keypair"),
-  dmEncrypt: (args: {
-    mySecretB58: string;
-    theirPublicB58: string;
-    plaintext: string;
-  }) => invokeCmd<string>("dm_encrypt", { ...args }),
-  dmDecrypt: (args: {
-    mySecretB58: string;
-    theirPublicB58: string;
-    ciphertextB58: string;
-  }) => invokeCmd<string>("dm_decrypt", { ...args }),
+  dmEncrypt: (args: { theirPublicB58: string; plaintext: string }) =>
+    invokeCmd<string>("dm_encrypt", { ...args }),
+  dmDecrypt: (args: { theirPublicB58: string; ciphertextB58: string }) =>
+    invokeCmd<string>("dm_decrypt", { ...args }),
 
   addressBookList: () => invokeCmd<AddressBookEntry[]>("address_book_list"),
   addressBookUpsert: (entry: AddressBookEntry) =>

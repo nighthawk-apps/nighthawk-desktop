@@ -451,7 +451,6 @@ export class ChatScreen extends LitElement {
     if (this.dmMode && this.dmKeys && this.peerPublic) {
       try {
         const plain = await api.dmDecrypt({
-          mySecretB58: this.dmKeys.secretB58,
           theirPublicB58: this.peerPublic,
           ciphertextB58: m.message,
         });
@@ -842,7 +841,6 @@ export class ChatScreen extends LitElement {
           return;
         }
         body = await api.dmEncrypt({
-          mySecretB58: this.dmKeys.secretB58,
           theirPublicB58: this.peerPublic.trim(),
           plaintext: body,
         });

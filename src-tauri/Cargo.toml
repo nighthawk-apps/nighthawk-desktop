@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.0.17"
+version = "3.0.18"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2021"
@@ -39,7 +39,7 @@ url = "2"
 
 # Same UniFFI crate as the Android wallet. Path is the real tree, not a
 # symlink: Cargo resolves `third_party/darkfi` relative to the crate directory.
-darkfi-mobile-ffi = { path = "../../nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
+darkfi-mobile-ffi = { path = "/tmp/nh-android-head/rust/darkfi-mobile-ffi", default-features = true }
 async-stream = "0.3.6"
 
 [patch.crates-io]

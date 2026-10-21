@@ -1,8 +1,6 @@
 //! Multi-wallet profile registry (desktop-only).
 
-use crate::paths::{
-    apply_wallet_profile, app_root, wallets_registry_path,
-};
+use crate::paths::{app_root, apply_wallet_profile, wallets_registry_path};
 use crate::prefs::{load_prefs, save_prefs};
 use anyhow::{anyhow, Context, Result};
 use rand::RngCore;
@@ -21,7 +19,9 @@ fn is_valid_created_wallet_id(id: &str) -> bool {
             && digits.bytes().all(|b| b.is_ascii_digit())
             && !suffix.is_empty()
             && suffix.len() <= 16
-            && suffix.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            && suffix
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     } else {
         rest.bytes().all(|b| b.is_ascii_digit())
     }
@@ -173,7 +173,9 @@ pub fn remove_profile(wallet_id: &str) -> Result<Vec<WalletProfile>> {
             .context("canonicalize wallets root")?;
         let target = dir.canonicalize().context("canonicalize profile dir")?;
         if !target.starts_with(&wallets_root_canon) {
-            return Err(anyhow!("Refusing to remove a path outside the wallets directory"));
+            return Err(anyhow!(
+                "Refusing to remove a path outside the wallets directory"
+            ));
         }
         fs::remove_dir_all(&target).context("remove wallet profile directory")?;
     }

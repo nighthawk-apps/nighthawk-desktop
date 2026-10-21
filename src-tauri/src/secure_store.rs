@@ -32,7 +32,10 @@ const PBKDF2_ITERS: u32 = 100_000;
 const DESKTOP_VAULT_SECRET: &str = "nighthawk-desktop-local-vault-v2";
 
 const KEYRING_SERVICE: &str = "com.nighthawkapps.desktop.vault";
-const KEYRING_MASTER_KEY: &str = "master_key";
+/// Legacy account shared by every profile. Reads fall back to it and copy
+/// the key into the profile-scoped account. Wiping one profile must not
+/// delete this entry, or every other profile loses its vault.
+const KEYRING_MASTER_KEY_LEGACY: &str = "master_key";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VaultMeta {
@@ -89,14 +92,49 @@ fn ensure_vault_dir() -> Result<()> {
 /// Derive a key from a static constant (legacy path).
 fn derive_key_pbkdf2(salt: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(DESKTOP_VAULT_SECRET.as_bytes(), salt, PBKDF2_ITERS, &mut out);
+    pbkdf2_hmac::<Sha256>(
+        DESKTOP_VAULT_SECRET.as_bytes(),
+        salt,
+        PBKDF2_ITERS,
+        &mut out,
+    );
     out
+}
+
+fn keyring_account() -> String {
+    let root = crate::paths::wallet_data_root();
+    let digest = Sha256::digest(root.to_string_lossy().as_bytes());
+    format!("master_key:{}", hex::encode(&digest[..8]))
+}
+
+fn read_keyring_secret(account: &str) -> Option<[u8; 32]> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account).ok()?;
+    let hex_str = entry.get_password().ok()?;
+    let bytes = hex::decode(hex_str.trim()).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Some(key)
 }
 
 /// Get or create a master key from the OS keychain.
 /// Returns `None` if the keychain is unavailable.
 fn keychain_master_key() -> Option<[u8; 32]> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_MASTER_KEY).ok()?;
+    let account = keyring_account();
+    if let Some(key) = read_keyring_secret(&account) {
+        return Some(key);
+    }
+    // One-time copy so this profile survives a wipe of a different profile
+    // that used to share the global keychain entry.
+    if let Some(key) = read_keyring_secret(KEYRING_MASTER_KEY_LEGACY) {
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) {
+            let _ = entry.set_password(&hex::encode(key));
+        }
+        return Some(key);
+    }
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &account).ok()?;
     match entry.get_password() {
         Ok(hex_str) => {
             let bytes = hex::decode(hex_str.trim()).ok()?;
@@ -126,8 +164,21 @@ fn key_fingerprint(key: &[u8; 32]) -> String {
 }
 
 /// Accept SHA-256 fingerprints and the raw-key hex some older writers stored.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 fn key_matches_meta(key: &[u8; 32], key_hash: &str) -> bool {
-    key_fingerprint(key) == key_hash || hex::encode(key) == key_hash
+    let fp = key_fingerprint(key);
+    let raw = hex::encode(key);
+    ct_eq(fp.as_bytes(), key_hash.as_bytes()) || ct_eq(raw.as_bytes(), key_hash.as_bytes())
 }
 
 fn mix_master(master: &[u8; 32], salt: &[u8]) -> [u8; 32] {
@@ -136,43 +187,20 @@ fn mix_master(master: &[u8; 32], salt: &[u8]) -> [u8; 32] {
     out
 }
 
-fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .context("create vault.key")?;
-        f.write_all(bytes).context("write vault.key")?;
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(path, bytes).context("write vault.key")?;
-    }
-    Ok(())
-}
-
-/// Random master key on disk. Used only when the OS keychain is unavailable.
+/// Read a legacy `vault.key`. Never creates one: a missing file must not
+/// mint a new key during decrypt, which used to write the key beside the
+/// ciphertext whenever the primary key check failed.
 fn file_master_key() -> Option<[u8; 32]> {
     let path = file_key_path();
-    if path.exists() {
-        let bytes = fs::read(&path).ok()?;
-        if bytes.len() != 32 {
-            return None;
-        }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&bytes);
-        return Some(key);
+    if !path.exists() {
+        return None;
+    }
+    let bytes = fs::read(&path).ok()?;
+    if bytes.len() != 32 {
+        return None;
     }
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
-    ensure_vault_dir().ok()?;
-    write_secret_file(&path, &key).ok()?;
+    key.copy_from_slice(&bytes);
     Some(key)
 }
 
@@ -249,7 +277,9 @@ fn read_meta() -> Result<Option<VaultMeta>> {
         let _ = fs::remove_file(data_path());
         return Ok(None);
     }
-    Ok(Some(serde_json::from_value(raw).context("parse vault meta")?))
+    Ok(Some(
+        serde_json::from_value(raw).context("parse vault meta")?,
+    ))
 }
 
 fn write_meta(meta: &VaultMeta) -> Result<()> {
@@ -383,7 +413,9 @@ pub fn vault_ready() -> bool {
 /// Load secrets into the in-memory session (no user PIN).
 pub fn unlock_session() -> Result<()> {
     if !vault_ready() {
-        return Err(anyhow!("No wallet on this device — create or restore first"));
+        return Err(anyhow!(
+            "No wallet on this device — create or restore first"
+        ));
     }
     unlock_into_session()
 }
@@ -420,7 +452,9 @@ pub fn wipe_secrets() -> Result<()> {
     let _ = fs::remove_file(data_path());
     let _ = fs::remove_file(file_key_path());
     // Also remove the keychain master key.
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_MASTER_KEY) {
+    // Only this profile's key. The legacy global entry stays so other
+    // profiles that have not copied it yet can still open.
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_account()) {
         let _ = entry.delete_credential();
     }
     legacy_delete_all();

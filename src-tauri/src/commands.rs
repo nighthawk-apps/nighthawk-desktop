@@ -6,11 +6,10 @@ use crate::state::{AppState, MinerHandle};
 use crate::wallets;
 use darkfi_mobile_ffi::{
     chacha_decrypt_dm, chacha_encrypt_dm, darkirc_connection_phase, darkirc_status,
-    generate_darkfi_mnemonic,
-    generate_dm_keypair, is_arti_running, redact_sync_error, send_chat_message, start_arti_proxy, start_darkirc,
-    stop_arti_proxy, stop_darkirc, validate_darkfi_mnemonic, DarkfiWalletHandle,
-    DarkfiWalletNativeError, DarkircEventCallback, DrkBootstrapConfig, ReorgEvent,
-    ReorgEventCallback,
+    generate_darkfi_mnemonic, generate_dm_keypair, is_arti_running, redact_sync_error,
+    send_chat_message, start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc,
+    validate_darkfi_mnemonic, DarkfiWalletHandle, DarkfiWalletNativeError, DarkircEventCallback,
+    DrkBootstrapConfig, ReorgEvent, ReorgEventCallback,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -216,6 +215,14 @@ pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String>
     if !prefs.lightwallet_url.trim().is_empty() {
         validate_lwd_url(&prefs.lightwallet_url)?;
     }
+    if !prefs.stratum_url.trim().is_empty() {
+        validate_host_port(&prefs.stratum_url, "stratum")?;
+    }
+    if let Some(rpc) = &prefs.darkfid_rpc_url {
+        if !rpc.trim().is_empty() {
+            validate_host_port(rpc, "darkfid RPC")?;
+        }
+    }
     let old = state.prefs.lock().clone();
     let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
         || old.use_tor != prefs.use_tor
@@ -367,10 +374,7 @@ pub async fn restore_wallet(
 
 /// Open an existing vault (no PIN). Called automatically on app start.
 #[tauri::command]
-pub async fn open_wallet(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn open_wallet(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     open_existing_wallet(&app, state.inner()).await
 }
 
@@ -546,7 +550,9 @@ pub struct TokenBalanceDto {
 }
 
 #[tauri::command]
-pub async fn list_token_balances(state: State<'_, AppState>) -> Result<Vec<TokenBalanceDto>, String> {
+pub async fn list_token_balances(
+    state: State<'_, AppState>,
+) -> Result<Vec<TokenBalanceDto>, String> {
     with_wallet_blocking(&state, |w| {
         let list = w.list_token_balances().map_err(ffi_err)?;
         Ok(list
@@ -566,7 +572,10 @@ pub async fn transaction_payment_memo(
     state: State<'_, AppState>,
     tx_hash: String,
 ) -> Result<Option<String>, String> {
-    with_wallet_blocking(&state, |w| w.transaction_payment_memo(tx_hash).map_err(ffi_err)).await
+    with_wallet_blocking(&state, |w| {
+        w.transaction_payment_memo(tx_hash).map_err(ffi_err)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -574,7 +583,10 @@ pub async fn transaction_recipient(
     state: State<'_, AppState>,
     tx_hash: String,
 ) -> Result<Option<String>, String> {
-    with_wallet_blocking(&state, |w| w.transaction_recipient(tx_hash).map_err(ffi_err)).await
+    with_wallet_blocking(&state, |w| {
+        w.transaction_recipient(tx_hash).map_err(ffi_err)
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -710,8 +722,14 @@ pub async fn dao_propose_transfer(
     recipient_address: String,
 ) -> Result<String, String> {
     with_wallet_blocking(&state, move |w| {
-        w.dao_propose_transfer(dao_name, duration_blockwindows, amount, token_id, recipient_address)
-            .map_err(ffi_err)
+        w.dao_propose_transfer(
+            dao_name,
+            duration_blockwindows,
+            amount,
+            token_id,
+            recipient_address,
+        )
+        .map_err(ffi_err)
     })
     .await
 }
@@ -765,8 +783,15 @@ pub fn arti_status() -> bool {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmKeypairDto {
-    pub secret_b58: String,
     pub public_b58: String,
+}
+
+fn load_dm_secret() -> Result<Vec<u8>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    let keys = crate::dm_store::load(&wallet_pass)
+        .map_err(map_err)?
+        .ok_or_else(|| "No DM key on this profile".to_string())?;
+    bs58_decode(&keys.secret_b58)
 }
 
 #[tauri::command]
@@ -774,12 +799,11 @@ pub fn dm_generate_keypair() -> Result<DmKeypairDto, String> {
     let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
     let k = generate_dm_keypair();
     let stored = crate::dm_store::DmKeypairStored {
-        secret_b58: k.secret_b58.clone(),
+        secret_b58: k.secret_b58,
         public_b58: k.public_b58.clone(),
     };
     crate::dm_store::save(&wallet_pass, &stored).map_err(map_err)?;
     Ok(DmKeypairDto {
-        secret_b58: k.secret_b58,
         public_b58: k.public_b58,
     })
 }
@@ -789,29 +813,20 @@ pub fn dm_load_keypair() -> Result<Option<DmKeypairDto>, String> {
     let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
     let keys = crate::dm_store::load(&wallet_pass).map_err(map_err)?;
     Ok(keys.map(|k| DmKeypairDto {
-        secret_b58: k.secret_b58,
         public_b58: k.public_b58,
     }))
 }
 
 #[tauri::command]
-pub fn dm_encrypt(
-    my_secret_b58: String,
-    their_public_b58: String,
-    plaintext: String,
-) -> Result<String, String> {
-    let my_secret = bs58_decode(&my_secret_b58)?;
+pub fn dm_encrypt(their_public_b58: String, plaintext: String) -> Result<String, String> {
+    let my_secret = load_dm_secret()?;
     let their_public = bs58_decode(&their_public_b58)?;
     chacha_encrypt_dm(my_secret, their_public, plaintext).map_err(ffi_err)
 }
 
 #[tauri::command]
-pub fn dm_decrypt(
-    my_secret_b58: String,
-    their_public_b58: String,
-    ciphertext_b58: String,
-) -> Result<String, String> {
-    let my_secret = bs58_decode(&my_secret_b58)?;
+pub fn dm_decrypt(their_public_b58: String, ciphertext_b58: String) -> Result<String, String> {
+    let my_secret = load_dm_secret()?;
     let their_public = bs58_decode(&their_public_b58)?;
     chacha_decrypt_dm(my_secret, their_public, ciphertext_b58).map_err(ffi_err)
 }
@@ -873,10 +888,7 @@ pub fn wallets_create(
 }
 
 #[tauri::command]
-pub fn wallets_switch(
-    state: State<'_, AppState>,
-    wallet_id: String,
-) -> Result<(), String> {
+pub fn wallets_switch(state: State<'_, AppState>, wallet_id: String) -> Result<(), String> {
     {
         let mut miner = state.miner.lock();
         if let Some(mut m) = miner.take() {
@@ -894,7 +906,10 @@ pub fn wallets_switch(
 }
 
 #[tauri::command]
-pub fn wallets_rename(wallet_id: String, label: String) -> Result<Vec<wallets::WalletProfile>, String> {
+pub fn wallets_rename(
+    wallet_id: String,
+    label: String,
+) -> Result<Vec<wallets::WalletProfile>, String> {
     wallets::rename_profile(&wallet_id, label).map_err(map_err)
 }
 
@@ -911,8 +926,7 @@ pub async fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<()
     let path = darkirc_path(network).to_string_lossy().to_string();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let cb: Option<Box<dyn DarkircEventCallback>> =
-            Some(Box::new(TauriChatCb { app }));
+        let cb: Option<Box<dyn DarkircEventCallback>> = Some(Box::new(TauriChatCb { app }));
         start_darkirc(path, prefs.use_tor, prefs.tor_socks_port, cb).map_err(ffi_err)
     })
     .await
@@ -952,16 +966,15 @@ fn sanitize_nickname(raw: &str) -> Result<String, String> {
         .take(24)
         .collect();
     if cleaned.is_empty() {
-        return Err("Nickname must contain at least one alphanumeric or underscore character".into());
+        return Err(
+            "Nickname must contain at least one alphanumeric or underscore character".into(),
+        );
     }
     Ok(cleaned)
 }
 
 #[tauri::command]
-pub fn set_chat_nick(
-    state: State<'_, AppState>,
-    nickname: String,
-) -> Result<(), String> {
+pub fn set_chat_nick(state: State<'_, AppState>, nickname: String) -> Result<(), String> {
     let sanitized = sanitize_nickname(nickname.trim())?;
     let mut prefs = state.prefs.lock();
     prefs.chat_nick = sanitized;
@@ -1022,7 +1035,10 @@ pub async fn chat_send(
                 return Ok(());
             }
             _ => {
-                return Err(format!("Unknown command '{}'. Type /help for DarkIRC commands.", cmd));
+                return Err(format!(
+                    "Unknown command '{}'. Type /help for DarkIRC commands.",
+                    cmd
+                ));
             }
         }
     }
@@ -1081,24 +1097,99 @@ fn parse_hashrate(log: &str) -> Option<f64> {
 
 fn xmrig_bin(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
-    // Prefer packaged sidecar / resource; fall back to Homebrew / PATH.
-    if let Ok(p) = app
+    let p = app
         .path()
         .resolve("binaries/xmrig", tauri::path::BaseDirectory::Resource)
-    {
-        if p.exists() {
-            return Ok(p);
+        .map_err(|e| format!("xmrig resource: {e}"))?;
+    if !p.exists() {
+        return Err("bundled xmrig is missing from the app resources".into());
+    }
+    verify_xmrig_hash(&p)?;
+    Ok(p)
+}
+
+/// SHA-256 of the xmrig builds shipped in `src-tauri/binaries`.
+fn verify_xmrig_hash(path: &std::path::Path) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    const ALLOWED: &[&str] = &[
+        "f3ec92e5937bc2510e074e28fb1811215f76229fa08067adc5b2e2848fa8e845",
+        "3bf7a353daa4af0f4d2aa4c5a0294fd14d3a330b0abf2e2e4dd23e14650aa527",
+        "6fa80698d7268f6e88aa88c06fb27ee99e1bcee747c2e76911e6206a5b1aeeb3",
+        "b20f39fc00d242e706b6c30367ad811c676e0575050a4ec2f30104b696944b49",
+    ];
+    let bytes = std::fs::read(path).map_err(|e| format!("read xmrig: {e}"))?;
+    let digest = hex::encode(Sha256::digest(bytes));
+    if ALLOWED.iter().any(|known| *known == digest) {
+        Ok(())
+    } else {
+        Err(format!(
+            "xmrig at {} has hash {digest}, which is not a known Nighthawk build",
+            path.display()
+        ))
+    }
+}
+
+fn endpoint_url(raw: &str) -> Result<url::Url, String> {
+    let trimmed = raw.trim();
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    };
+    url::Url::parse(&with_scheme).map_err(|e| e.to_string())
+}
+
+fn ip_is_blocked(ip: std::net::IpAddr) -> bool {
+    let ip = match ip {
+        std::net::IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(std::net::IpAddr::V6(v6)),
+        other => other,
+    };
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            let o = v6.octets();
+            // fc00::/7 unique-local, fe80::/10 link-local.
+            (o[0] & 0xfe) == 0xfc || (o[0] == 0xfe && (o[1] & 0xc0) == 0x80)
         }
     }
-    for c in [
-        PathBuf::from("/opt/homebrew/bin/xmrig"),
-        PathBuf::from("/usr/local/bin/xmrig"),
-    ] {
-        if c.exists() {
-            return Ok(c);
+}
+
+fn url_host_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(v4)) => v4.is_loopback(),
+        Some(url::Host::Ipv6(v6)) => {
+            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
         }
+        None => false,
     }
-    Err("xmrig binary not found (bundle sidecar or install via Homebrew)".into())
+}
+
+fn url_host_blocked(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(v4)) => ip_is_blocked(std::net::IpAddr::V4(v4)),
+        Some(url::Host::Ipv6(v6)) => ip_is_blocked(std::net::IpAddr::V6(v6)),
+        None => true,
+    }
+}
+
+fn validate_host_port(raw: &str, label: &str) -> Result<(), String> {
+    let parsed = endpoint_url(raw).map_err(|e| format!("invalid {label}: {e}"))?;
+    if !url_host_loopback(&parsed) && url_host_blocked(&parsed) {
+        return Err(format!(
+            "{label} host is private, link-local, or an IPv4-mapped loopback"
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1185,11 +1276,25 @@ pub async fn mine_start(
     .map_err(|e| format!("Wallet operation interrupted: {e}"))??;
 
     let stratum = prefs.stratum_url.clone();
+    validate_host_port(&stratum, "stratum")?;
+    let stratum_loopback = endpoint_url(&stratum)
+        .map(|u| url_host_loopback(&u))
+        .unwrap_or(false);
     let log_path = crate::paths::app_root().join("xmrig.log");
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).map_err(map_err)?;
     }
     let cfg_path = crate::paths::app_root().join("xmrig.json");
+    let mut pool = serde_json::json!({
+        "url": stratum,
+        "user": address,
+        "pass": "x",
+        "keepalive": true,
+        "tls": !stratum_loopback
+    });
+    if prefs.use_tor && !stratum_loopback {
+        pool["socks5"] = serde_json::json!(format!("127.0.0.1:{}", prefs.tor_socks_port));
+    }
     let cfg = serde_json::json!({
         "donate-level": 0,
         "donate-over-proxy": 0,
@@ -1198,13 +1303,7 @@ pub async fn mine_start(
             "yield": false,
             "max-threads-hint": 100
         },
-        "pools": [{
-            "url": stratum,
-            "user": address,
-            "pass": "x",
-            "keepalive": true,
-            "tls": false
-        }],
+        "pools": [pool],
         "print-time": 15
     });
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).map_err(map_err)?;
@@ -1272,20 +1371,11 @@ pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String
     Ok(())
 }
 
-fn is_rfc1918_172(host: &str) -> bool {
-    let Some(rest) = host.strip_prefix("172.") else {
-        return false;
-    };
-    let octet = rest.split('.').next().and_then(|s| s.parse::<u8>().ok());
-    matches!(octet, Some(n) if (16..=31).contains(&n))
-}
-
 fn validate_lwd_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url.trim()).map_err(|e| format!("invalid LWD URL: {e}"))?;
     let scheme = parsed.scheme();
-    let host = parsed.host_str().ok_or("LWD URL missing host")?;
     let port = parsed.port_or_known_default().unwrap_or(0);
-    let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1");
+    let loopback = url_host_loopback(&parsed);
     match scheme {
         "http" | "tcp" => {
             if !loopback {
@@ -1296,18 +1386,12 @@ fn validate_lwd_url(url: &str) -> Result<(), String> {
         other => return Err(format!("unsupported LWD URL scheme: {other}")),
     }
     if !loopback && ![9067, 9068, 443].contains(&port) {
-        return Err(format!("LWD port {port} not allowed (use 9067, 9068, or 443)"));
+        return Err(format!(
+            "LWD port {port} not allowed (use 9067, 9068, or 443)"
+        ));
     }
-    if !loopback {
-        let blocked = host.starts_with("10.")
-            || host.starts_with("192.168.")
-            || host.starts_with("127.")
-            || host.starts_with("169.254.")
-            || host == "0.0.0.0"
-            || is_rfc1918_172(host);
-        if blocked {
-            return Err("private/loopback host not allowed for remote LWD".into());
-        }
+    if !loopback && url_host_blocked(&parsed) {
+        return Err("private/loopback host not allowed for remote LWD".into());
     }
     Ok(())
 }
@@ -1328,9 +1412,10 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     }
     *state.wallet.lock() = None;
     secure_store::clear_session();
-    let network = *state.network.lock();
     let dir = crate::paths::wallet_data_root();
-    let _ = std::fs::remove_dir_all(crate::paths::network_dir(network));
+    let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Testnet));
+    let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Mainnet));
+    let _ = std::fs::remove_file(crate::paths::address_book_path());
     let _ = std::fs::remove_file(dir.join("vault.dat"));
     let _ = std::fs::remove_file(dir.join("vault.meta.json"));
     let _ = std::fs::remove_file(dir.join("vault.key"));
@@ -1385,5 +1470,10 @@ mod tests {
         assert!(validate_lwd_url("https://172.16.0.1:9067").is_err());
         assert!(validate_lwd_url("https://169.254.1.1:9067").is_err());
         assert!(validate_lwd_url("https://example.com:443").is_ok());
+        assert!(validate_lwd_url("https://[::1]:443").is_ok());
+        assert!(validate_lwd_url("http://[::1]:9067").is_ok());
+        assert!(validate_lwd_url("https://[fc00::1]:443").is_err());
+        assert!(validate_lwd_url("https://[::ffff:192.168.0.1]:443").is_err());
+        assert!(validate_lwd_url("https://[::ffff:127.0.0.1]:443").is_ok());
     }
 }
