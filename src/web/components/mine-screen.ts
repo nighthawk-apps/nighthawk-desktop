@@ -96,7 +96,9 @@ export class MineScreen extends LitElement {
     }
     pre {
       white-space: pre-wrap;
-      font-size: 11px;
+      font-family: var(--font-family-mono);
+      font-size: var(--font-size-xs);
+      line-height: 1.45;
       color: var(--color-text-muted);
       max-height: 120px;
       overflow: auto;

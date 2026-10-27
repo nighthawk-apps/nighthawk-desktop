@@ -3,6 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import QRCode from "qrcode";
 import {
   api,
+  spendReady,
   type LightSyncState,
   type TokenBalance,
   type TxRecord,
@@ -35,9 +36,12 @@ export class WalletScreen extends LitElement {
       padding: 20px;
     }
     .balance {
+      font-family: var(--font-family-display);
       font-size: var(--font-size-3xl);
+      line-height: 1.25;
+      letter-spacing: 0.01em;
       color: var(--color-text-header);
-      font-weight: 700;
+      font-weight: 600;
     }
     .sub {
       color: var(--color-text-muted);
@@ -157,8 +161,14 @@ export class WalletScreen extends LitElement {
     if (this.pollTimer) window.clearInterval(this.pollTimer);
   }
 
-  private methodClass(method: string): string {
-    const m = method.toLowerCase();
+  /** The method sticks from the last good cycle; only a live session is green. */
+  private lwdLive(snap: LightSyncState): boolean {
+    return ["Synced", "Syncing", "Scanning"].includes(snap.status);
+  }
+
+  private methodClass(snap: LightSyncState): string {
+    if (!this.lwdLive(snap)) return "trial";
+    const m = snap.syncMethod.toLowerCase();
     if (m.includes("unifomr") || m.includes("omr")) return "omr";
     if (m.includes("trial")) return "trial";
     return "";
@@ -166,9 +176,11 @@ export class WalletScreen extends LitElement {
 
   private methodLabel(snap: LightSyncState): string {
     const m = snap.syncMethod || snap.syncType || "Unknown";
-    if (/unifomr|omr/i.test(m)) return "UnifOMR";
-    if (/trial/i.test(m)) return "Trial decrypt";
-    return m;
+    const base = /unifomr|omr/i.test(m) ? "UnifOMR" : /trial/i.test(m) ? "Trial decrypt" : m;
+    if (snap.status === "Connecting") return `${base} · connecting`;
+    if (snap.status === "Degraded") return `${base} · fallback`;
+    if (!this.lwdLive(snap)) return `${base} · not connected`;
+    return base;
   }
 
   private progressPct(snap: LightSyncState): number {
@@ -276,7 +288,7 @@ export class WalletScreen extends LitElement {
         ? html`
             <div class="sync-card">
               <div class="sync-row">
-                <span class="sync-method ${this.methodClass(snap.syncMethod)}"
+                <span class="sync-method ${this.methodClass(snap)}"
                   >${this.methodLabel(snap)}</span
                 >
                 <span class="sub" style="margin:0"
@@ -287,6 +299,9 @@ export class WalletScreen extends LitElement {
               <div class="sub" style="margin:0">
                 ${snap.statusMessage || snap.syncTypeMessage || "—"}
                 ${snap.omrAvailable ? " · OMR available" : " · OMR unavailable"}
+                ${spendReady(snap)
+                  ? ""
+                  : " · Send stays off until the Money tree reaches the tip"}
               </div>
               ${snap.fallbackUserMessage
                 ? html`<div class="warn" style="margin-top:8px;margin-bottom:0">

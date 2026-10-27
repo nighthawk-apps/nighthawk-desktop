@@ -7,9 +7,9 @@ use crate::wallets;
 use darkfi_mobile_ffi::{
     chacha_decrypt_dm, chacha_encrypt_dm, darkirc_connection_phase, darkirc_status,
     generate_darkfi_mnemonic, generate_dm_keypair, is_arti_running, redact_sync_error,
-    send_chat_message, start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc,
-    validate_darkfi_mnemonic, DarkfiWalletHandle, DarkfiWalletNativeError, DarkircEventCallback,
-    DrkBootstrapConfig, ReorgEvent, ReorgEventCallback,
+    send_chat_message, set_network_storage_dir, start_arti_proxy, start_darkirc, stop_arti_proxy,
+    stop_darkirc, validate_darkfi_mnemonic, DarkfiWalletHandle, DarkfiWalletNativeError,
+    DarkircEventCallback, DarkircTransport, DrkBootstrapConfig, ReorgEvent, ReorgEventCallback,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -182,6 +182,8 @@ fn build_bootstrap(
         lightwallet_tls_pin_sha256: tls_pin,
         use_tor: prefs.use_tor,
         tor_socks_port: prefs.tor_socks_port,
+        use_nym: false,
+        nym_socks_port: 1080,
         darkfid_rpc_url: prefs.darkfid_rpc_url.clone(),
         strict_omr_only: prefs.strict_omr_only,
     })
@@ -507,6 +509,33 @@ pub async fn wallet_list_txs(state: State<'_, AppState>) -> Result<Vec<TxDto>, S
     .await
 }
 
+/// Spends need a Money tree that includes genesis and a cursor at the tip.
+/// Notes can show up earlier; sending before that builds a proof against a short tree.
+/// `Degraded` is the caught-up state when UnifOMR is down; the cursor check
+/// still refuses a wallet that has not reached the tip.
+fn spend_ready(status: &str, scanned: i64, tip: i64, proto_mismatch: bool) -> bool {
+    if proto_mismatch || tip <= 0 || scanned < tip {
+        return false;
+    }
+    status.eq_ignore_ascii_case("Synced") || status.eq_ignore_ascii_case("Degraded")
+}
+
+fn reject_until_spend_ready(w: &DarkfiWalletHandle) -> Result<(), String> {
+    let s = w.light_sync_snapshot();
+    if spend_ready(
+        &s.status,
+        s.scanned_height,
+        s.chain_tip,
+        s.proto_version_mismatch,
+    ) {
+        return Ok(());
+    }
+    Err(
+        "Wallet is still scanning. Send stays off until the Money tree is caught up to the tip."
+            .into(),
+    )
+}
+
 #[tauri::command]
 pub async fn estimate_fee(
     state: State<'_, AppState>,
@@ -517,6 +546,7 @@ pub async fn estimate_fee(
 ) -> Result<i64, String> {
     // Fee tiers are not applied on build/broadcast yet — return the fee send uses.
     with_wallet_blocking(&state, |w| {
+        reject_until_spend_ready(&w)?;
         w.estimate_transfer_fee(recipient, amount, token_id, memo)
             .map_err(ffi_err)
     })
@@ -532,6 +562,7 @@ pub async fn send_drk(
     token_id: Option<String>,
 ) -> Result<String, String> {
     with_wallet_blocking(&state, |w| {
+        reject_until_spend_ready(&w)?;
         let bytes = w
             .build_transfer(recipient.clone(), amount, token_id, memo.clone())
             .map_err(ffi_err)?;
@@ -766,7 +797,10 @@ pub async fn handle_reorg_recovery(
 
 #[tauri::command]
 pub fn arti_start(state: State<'_, AppState>) -> Result<bool, String> {
+    let network = *state.network.lock();
     let port = state.prefs.lock().tor_socks_port;
+    let cache = cache_path(network);
+    set_network_storage_dir(cache.to_string_lossy().to_string());
     start_arti_proxy(port.to_string()).map_err(ffi_err)
 }
 
@@ -927,7 +961,12 @@ pub async fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<()
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let cb: Option<Box<dyn DarkircEventCallback>> = Some(Box::new(TauriChatCb { app }));
-        start_darkirc(path, prefs.use_tor, prefs.tor_socks_port, cb).map_err(ffi_err)
+        let transport = if prefs.use_tor {
+            DarkircTransport::Tor
+        } else {
+            DarkircTransport::Direct
+        };
+        start_darkirc(path, transport, prefs.tor_socks_port, cb).map_err(ffi_err)
     })
     .await
     .map_err(|e| format!("Chat start interrupted: {e}"))?

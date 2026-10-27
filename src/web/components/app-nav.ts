@@ -6,6 +6,11 @@ export class AppNav extends LitElement {
   @property() active = "wallet";
 
   static styles = css`
+    :host {
+      font-family: var(--font-family-base);
+      font-size: var(--font-size-sm);
+      line-height: 1.35;
+    }
     nav {
       display: flex;
       gap: 4px;

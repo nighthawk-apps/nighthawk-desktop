@@ -26,6 +26,9 @@ export class MainApp extends LitElement {
       background: var(--color-moonlit, #0e1012);
       color: var(--color-text-body, #c4cbd4);
       font-family: var(--font-family-base);
+      font-size: 1rem;
+      line-height: 1.45;
+      letter-spacing: 0.01em;
     }
     main {
       flex: 1;

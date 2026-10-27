@@ -1,29 +1,6 @@
 /* Bundled brand fonts — no remote @import (blocks WKWebView when offline).
-   Source of truth: Android Compose theme (Orbitron display + Share Tech Mono body). */
-@font-face {
-  font-family: "Orbitron";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../assets/fonts/orbitron-400.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Orbitron";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../assets/fonts/orbitron-600.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Share Tech Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../assets/fonts/share-tech-mono-400.woff2") format("woff2");
-}
-
+   Source of truth: Android Typography.kt — Outfit titles, Source Sans 3 body,
+   Source Serif 4 on the paper theme, IBM Plex Mono for keys only. */
 @font-face {
   font-family: "Outfit";
   font-style: normal;
@@ -96,15 +73,17 @@
   --color-overlay: rgba(0, 0, 0, 0.4);
   --color-highlight: rgba(255, 255, 255, 0.08);
 
-  /* Stealth: Outfit headings, Source Sans 3 body. Mono is for keys only. */
+  /* Stealth: Outfit headings, Source Sans 3 body. Mono is for keys only.
+     Sizes follow Android bodyMedium (14) / bodyLarge (16) / titleLarge (21),
+     one step up from the old 12px UI so desktop text matches the phone app. */
   --font-family-display: "Outfit", system-ui, sans-serif;
   --font-family-base: "Source Sans 3", system-ui, sans-serif;
   --font-family-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --font-size-xs: 0.75rem;   /* 12 */
-  --font-size-sm: 0.875rem;  /* 14 */
-  --font-size-md: 1rem;      /* 16 */
-  --font-size-lg: 1.125rem;  /* 18 */
-  --font-size-xl: 1.3125rem; /* 21 titleLarge */
+  --font-size-xs: 0.875rem;  /* 14 bodyMedium */
+  --font-size-sm: 1rem;      /* 16 bodyLarge */
+  --font-size-md: 1.125rem;  /* 18 */
+  --font-size-lg: 1.3125rem; /* 21 titleLarge */
+  --font-size-xl: 1.5rem;
   --font-size-2xl: 1.75rem;  /* 28 headlineMedium */
   --font-size-3xl: 1.875rem; /* 30 headlineLarge */
 
@@ -158,6 +137,10 @@
   box-sizing: border-box;
 }
 
+html {
+  font-size: 16px;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -166,6 +149,9 @@ html, body {
   background-color: var(--color-moonlit);
   color: var(--color-text-body);
   font-family: var(--font-family-base);
+  font-size: 1rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

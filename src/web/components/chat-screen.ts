@@ -188,6 +188,9 @@ export class ChatScreen extends LitElement {
       padding: 12px 16px;
       box-sizing: border-box;
       min-height: 0;
+      font-family: var(--font-family-base);
+      font-size: var(--font-size-sm);
+      line-height: 1.45;
     }
     .top {
       display: flex;
@@ -222,7 +225,7 @@ export class ChatScreen extends LitElement {
       border-radius: var(--border-radius-md);
       padding: 8px 10px;
       font-size: var(--font-size-sm);
-      line-height: 1.4;
+      line-height: 1.5;
       text-align: left;
       user-select: text;
       -webkit-user-select: text;

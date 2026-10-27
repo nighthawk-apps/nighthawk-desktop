@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.0.18"
+version = "3.0.25"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2021"
@@ -33,7 +33,7 @@ bs58 = "0.5"
 parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-blake3 = "1.8"
+blake3 = "1.8.3"
 argon2 = "0.5"
 url = "2"
 
@@ -46,3 +46,7 @@ async-stream = "0.3.6"
 halo2_proofs = { git = "https://github.com/parazyd/halo2", branch = "v050" }
 halo2_gadgets = { git = "https://github.com/parazyd/halo2", branch = "v050" }
 url = { git = "https://github.com/darkrenaissance/rust-url", branch = "v258" }
+# Same pins as nighthawk-android-wallet/rust/Cargo.toml: darkfi-mobile-ffi needs
+# nym-smolmix 2.0.0, which is not on crates.io, and one form_urlencoded.
+form_urlencoded = { git = "https://github.com/darkrenaissance/rust-url", branch = "v258" }
+nym-smolmix = { git = "https://github.com/nymtech/nym.git", rev = "5f0dba82d7a4c3d32fb21f78a0e3ddb6320b4ae8" }

@@ -3,7 +3,9 @@ import { customElement, state } from "lit/decorators.js";
 import jsQR from "jsqr";
 import {
   api,
+  spendReady,
   type AddressBookEntry,
+  type LightSyncState,
   type TokenBalance,
 } from "../lib/api";
 import { formatDrkAtomic, isValidDrkAmount } from "../lib/amount";
@@ -29,6 +31,8 @@ export class SendFlow extends LitElement {
   @state() private busy = false;
   @state() private saveLabel = "";
   @state() private scanHint = "";
+  @state() private sync: LightSyncState | null = null;
+  private pollTimer: number | undefined;
 
   static styles = css`
     label {
@@ -106,8 +110,10 @@ export class SendFlow extends LitElement {
     }
   `;
 
-  async connectedCallback() {
+  override async connectedCallback() {
     super.connectedCallback();
+    void this.pollSync();
+    this.pollTimer = window.setInterval(() => void this.pollSync(), 4000);
     try {
       this.tokens = await api.listTokenBalances();
       this.book = await api.addressBookList();
@@ -192,7 +198,25 @@ export class SendFlow extends LitElement {
     }
   }
 
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.pollTimer) window.clearInterval(this.pollTimer);
+  }
+
+  private async pollSync() {
+    try {
+      this.sync = await api.walletLightSync();
+    } catch {
+      /* send stays disabled until a snapshot arrives */
+    }
+  }
+
   private async estimate() {
+    if (!spendReady(this.sync)) {
+      this.error =
+        "Wallet is still scanning. Send stays off until the Money tree is caught up to the tip.";
+      return;
+    }
     this.error = "";
     if (!isValidDrkAmount(this.amount)) {
       this.error = "Enter a valid DRK amount (up to 8 decimal places)";
@@ -213,6 +237,11 @@ export class SendFlow extends LitElement {
   private async send() {
     this.error = "";
     this.result = "";
+    if (!spendReady(this.sync)) {
+      this.error =
+        "Wallet is still scanning. Send stays off until the Money tree is caught up to the tip.";
+      return;
+    }
     if (!isValidDrkAmount(this.amount)) {
       this.error = "Enter a valid DRK amount (up to 8 decimal places)";
       return;
@@ -341,9 +370,23 @@ export class SendFlow extends LitElement {
             Estimated fee: ${formatDrkAtomic(this.fee)} DRK
           </p>`
         : null}
+      ${spendReady(this.sync)
+        ? null
+        : html`<p class="msg">
+            Scanning — send stays off until the Money tree reaches the tip.
+          </p>`}
       <div class="row">
-        <button class="secondary" @click=${this.estimate}>Estimate fee</button>
-        <button ?disabled=${this.busy} @click=${this.send}>
+        <button
+          class="secondary"
+          ?disabled=${this.busy || !spendReady(this.sync)}
+          @click=${this.estimate}
+        >
+          Estimate fee
+        </button>
+        <button
+          ?disabled=${this.busy || !spendReady(this.sync)}
+          @click=${this.send}
+        >
           ${this.busy ? "Sending…" : "Send"}
         </button>
       </div>

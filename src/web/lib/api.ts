@@ -86,6 +86,16 @@ export interface LightSyncState {
   protoVersionMismatch: boolean;
 }
 
+/** Spend proofs need the Money tree at the tip. Notes may appear before that.
+ *  `Degraded` is a caught-up wallet whose OMR path is down; the height check
+ *  still keeps send off while the cursor is behind the tip.
+ */
+export function spendReady(snap: LightSyncState | null): boolean {
+  if (!snap || snap.protoVersionMismatch) return false;
+  if (snap.chainTip <= 0 || snap.scannedHeight < snap.chainTip) return false;
+  return snap.status === "Synced" || snap.status === "Degraded";
+}
+
 export interface TxRecord {
   txHash: string;
   height: number;
