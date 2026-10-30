@@ -4,7 +4,7 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-**3.00.025** (crate / Tauri semver **3.0.25** — leading zeros are not valid Cargo/Tauri versions). Same version as the Android and iOS apps. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and the UI uses the Android type scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.00.026** (crate / Tauri semver **3.0.26** — leading zeros are not valid Cargo/Tauri versions). Same version as the Android and iOS apps. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and the UI uses the Android type scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · Transfer · **Mine** · Settings)
 - **Tauri 2** Rust host
