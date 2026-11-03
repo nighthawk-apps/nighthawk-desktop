@@ -1,5 +1,5 @@
 /* Bundled brand fonts — no remote @import (blocks WKWebView when offline).
-   Source of truth: Android Typography.kt — Outfit titles, Source Sans 3 body,
+   Source of truth: Android Typography.kt — Outfit titles, DejaVu Sans Mono body,
    Source Serif 4 on the paper theme, IBM Plex Mono for keys only. */
 @font-face {
   font-family: "Outfit";
@@ -23,6 +23,22 @@
   font-weight: 100 900;
   font-display: swap;
   src: url("../assets/fonts/source_serif_4.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "DejaVu Sans Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/dejavu_sans_mono.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "DejaVu Sans Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/dejavu_sans_mono_bold.ttf") format("truetype");
 }
 
 @font-face {
@@ -77,7 +93,7 @@
      Sizes follow Android bodyMedium (14) / bodyLarge (16) / titleLarge (21),
      one step up from the old 12px UI so desktop text matches the phone app. */
   --font-family-display: "Outfit", system-ui, sans-serif;
-  --font-family-base: "Source Sans 3", system-ui, sans-serif;
+  --font-family-base: "DejaVu Sans Mono", ui-monospace, monospace;
   --font-family-mono: "IBM Plex Mono", ui-monospace, monospace;
   --font-size-xs: 0.875rem;  /* 14 bodyMedium */
   --font-size-sm: 1rem;      /* 16 bodyLarge */
@@ -130,7 +146,38 @@
   --color-overlay: rgba(0, 0, 0, 0.2);
   --color-highlight: rgba(44, 51, 58, 0.10);
   --font-family-display: "Source Serif 4", Georgia, serif;
-  --font-family-base: "Source Sans 3", system-ui, sans-serif;
+  --font-family-base: "DejaVu Sans Mono", ui-monospace, monospace;
+}
+
+/* Cyberpunk: the Void wallpaper, top left, at its own pixel size.
+   A larger window uncovers more of the same 3840×2160 frame.
+   Panels stay dark enough that Chat, Wallet, and Settings stay readable. */
+[data-theme="cyberpunk"] {
+  --color-moonlit: rgba(5, 8, 16, 0.72);
+  --color-charcoal-deep: rgba(8, 10, 18, 0.78);
+  --color-charcoal-raised: rgba(8, 10, 18, 0.82);
+  --color-elevated: rgba(16, 18, 28, 0.84);
+  --color-steel-border: #3d4c5c;
+  --color-steel-border-muted: rgba(61, 76, 92, 0.7);
+  --color-accent: #5ce1ff;
+  --color-accent-pressed: #2ec8ea;
+  --color-accent-deep: #12809a;
+  --color-accent-muted: #9aebff;
+  --color-on-accent: #041018;
+  --color-secondary-fill: rgba(26, 16, 36, 0.8);
+  --color-secondary-fill-highlight: rgba(42, 20, 48, 0.86);
+  --color-ink-panel: rgba(10, 12, 20, 0.8);
+  --color-ink-panel-lift: rgba(18, 22, 34, 0.86);
+  --color-text-header: #f7fbff;
+  --color-text-body: #e7eef8;
+  --color-text-muted: #d5deea;
+  --color-navigation-muted: #e7eef8;
+  --color-track-muted: rgba(20, 28, 40, 0.8);
+  --color-callout-fill: rgba(16, 22, 34, 0.82);
+  --color-callout-on: #f4fbff;
+  --color-accent-subtle-container: rgba(16, 40, 51, 0.86);
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-highlight: rgba(92, 225, 255, 0.16);
 }
 
 *, *::before, *::after {
@@ -160,6 +207,17 @@ html, body {
 body {
   /* Android Brush.verticalGradient(moonlit → charcoalDeep) */
   background: linear-gradient(180deg, var(--color-moonlit) 0%, var(--color-charcoal-deep) 100%);
+  background-attachment: fixed;
+}
+
+[data-theme="cyberpunk"] body {
+  background-color: #05060a;
+  background-image:
+    linear-gradient(rgba(5, 6, 10, 0.5), rgba(5, 6, 10, 0.5)),
+    url("../assets/cyberpunk-bg.jpg");
+  background-repeat: no-repeat;
+  background-position: left top;
+  background-size: auto, auto;
   background-attachment: fixed;
 }
 

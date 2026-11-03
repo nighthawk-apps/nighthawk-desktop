@@ -43,7 +43,7 @@ function sameChannel(a: string, b: string): boolean {
 
 @customElement("chat-screen")
 export class ChatScreen extends LitElement {
-  @state() private channel = "#dev";
+  @state() private channel = "#random";
   @state() private channelsList = [...CHANNELS];
   @state() private status = "stopped";
   @state() private messages: ChatMessage[] = [];
@@ -754,7 +754,7 @@ export class ChatScreen extends LitElement {
             (c) => !sameChannel(c, leaving),
           );
           if (this.channelsList.length === 0) {
-            this.channelsList = ["#dev"];
+            this.channelsList = ["#random"];
           }
           this.loadChannel(this.channelsList[0]);
           this.pushSystem(`Left channel: ${leaving}`);

@@ -39,12 +39,12 @@ discrete Gaussian σ=0.5, `‖u‖₀ = h/2 = 40`, `‖s‖₀ = h = 80` ⇒ σ_
   `[u8 version][u32 chunk_count] ( [u32 len][ct] × ℓ )…` — `ceil(M / D)` chunks
   for `M` flattened messages. The slot → height map is returned once, out-of-band,
   in `OmrDigestResponse.slot_heights` (packed little-endian `u32`).
-- **Ownership-proof replay fix (v2)** — `RegisterCluePublicKey` proofs sign
-  `b"DarkFi-UnifOMR-CluePK-v2" || network_byte || key_version (u32 LE) ||
+- **Ownership-proof replay fix** — `RegisterCluePublicKey` proofs sign
+  `b"DarkFi-UnifOMR-CluePK" || network_byte || key_version (u64 LE) ||
   payment_pubkey || clue_public_key`. The network byte kills cross-network
-  replay; `key_version` (unix seconds) is monotonic — the server only replaces
-  a registration when the new version is strictly greater (signed rotation),
-  and rejects lower/equal-version conflicts.
+  replay. `key_version` is a `u64` and wallets always send `1`. The server
+  rejects `0` and any lower version, accepts an equal version only when the
+  clue public key is unchanged, and replaces the row when the version is higher.
 - **Per-message SIMD packing (paper-faithful, 2026-08)** — the window's validated
   clues are flattened in canonical order (height ascending, then output order) and
   packed **one clue per SIMD slot** (paper §detector), replacing the earlier
@@ -151,10 +151,9 @@ Distribute `scripts/certs/LIGHTWALLET_TLS_PIN_SHA256.txt` to every client before
 ## Desktop note
 
 Desktop uses the sibling `darkfi-mobile-ffi` path dependency
-(`../../new-nighthawk-android-wallet/rust/darkfi-mobile-ffi` from `src-tauri`) for
+(`../../nighthawk-android-wallet/rust/darkfi-mobile-ffi` from `src-tauri`) for
 UnifOMR/PIR, so it inherits the exact Param2 constants and paper-faithful
 per-message packing as the Android FFI. Ops hardening (TLS pin, multi detection
-keys, memo) is wired through Tauri prefs/bootstrap. The
-`src-tauri/proto/lightwallet.proto` file is a stale reference copy — it is **not**
-compiled (there is no `tonic_build` step); the live gRPC types come from the FFI
-crate.
+keys, memo) is wired through Tauri prefs/bootstrap. gRPC types come from that
+FFI crate. This repo does not keep a `src-tauri/proto/lightwallet.proto` copy;
+`build.rs` only runs `tauri_build::build()`.

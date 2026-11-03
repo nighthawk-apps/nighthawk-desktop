@@ -13,7 +13,7 @@ Thank you for your interest in contributing!
 
 - `src/web/`: Lit components and CSS theme variables.
 - `src-tauri/src/`: Rust backend and gRPC proxy logic.
-- `src-tauri/proto/`: Protobuf definitions synced from `darkfi-lightwalletd`.
+- Protobuf types come from `nighthawk-android-wallet/rust/darkfi-mobile-ffi`. This repo does not keep a proto copy.
 
 ## Pull Requests
 

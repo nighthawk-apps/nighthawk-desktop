@@ -249,6 +249,7 @@ export class SettingsScreen extends LitElement {
         >
           <option value="stealth">Stealth — dark, Outfit and Source Sans 3</option>
           <option value="paper">Paper — white, Source Serif 4 and Source Sans 3</option>
+          <option value="cyberpunk">Cyberpunk — Void wallpaper, top left</option>
         </select>
       </div>
       <div class="card">
