@@ -123,6 +123,28 @@ export class WalletScreen extends LitElement {
       opacity: 0.6;
       cursor: default;
     }
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .actions button.outline {
+      flex: 1;
+      margin: 0;
+      background: transparent;
+      color: var(--color-text-header);
+      border: 1.5px solid var(--color-accent);
+      border-radius: var(--border-radius-md);
+      padding: 12px 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .actions button.outline:disabled {
+      color: color-mix(in srgb, var(--color-text-header) 40%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+      cursor: default;
+    }
     .tx {
       padding: 10px 0;
       border-bottom: 1px solid var(--color-steel-border-muted);
@@ -266,6 +288,16 @@ export class WalletScreen extends LitElement {
     await navigator.clipboard.writeText(this.address);
   }
 
+  private openTransfer(tab: "send" | "receive") {
+    this.dispatchEvent(
+      new CustomEvent("open-transfer", {
+        detail: tab,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private async recoverReorg() {
     if (this.reorgHeight === null) return;
     this.error = "";
@@ -326,6 +358,18 @@ export class WalletScreen extends LitElement {
               : null}
           </p>`
         : null}
+      <div class="actions">
+        <button class="outline" @click=${() => this.openTransfer("receive")}>
+          Receive money
+        </button>
+        <button
+          class="outline"
+          ?disabled=${!(snap ? spendReady(snap) : false)}
+          @click=${() => this.openTransfer("send")}
+        >
+          Send money
+        </button>
+      </div>
       <div class="card">
         <div class="addr">${this.address}</div>
         ${this.qr ? html`<img src=${this.qr} alt="QR" />` : null}

@@ -149,8 +149,8 @@
   --font-family-base: "DejaVu Sans Mono", ui-monospace, monospace;
 }
 
-/* Cyberpunk: the Void wallpaper, top left, at its own pixel size.
-   A larger window uncovers more of the same 3840×2160 frame.
+/* Cyberpunk: wallpaper scaled until it covers the window, pinned at the top-left
+   so the NIGHTHAWK title stays in frame.
    Panels stay dark enough that Chat, Wallet, and Settings stay readable. */
 [data-theme="cyberpunk"] {
   --color-moonlit: rgba(5, 8, 16, 0.72);
@@ -216,8 +216,8 @@ body {
     linear-gradient(rgba(5, 6, 10, 0.5), rgba(5, 6, 10, 0.5)),
     url("../assets/cyberpunk-bg.jpg");
   background-repeat: no-repeat;
-  background-position: left top;
-  background-size: auto, auto;
+  background-position: left top, left top;
+  background-size: cover, cover;
   background-attachment: fixed;
 }
 
@@ -274,6 +274,28 @@ a:hover {
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+}
+
+/* Wallet Send / Receive — border only, header text (matches mobile). */
+.btn-outline {
+  background: transparent;
+  color: var(--color-text-header);
+  border: 1.5px solid var(--color-accent);
+  padding: 12px 14px;
+  border-radius: var(--border-radius-md);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-outline:disabled {
+  color: color-mix(in srgb, var(--color-text-header) 40%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  cursor: default;
 }
 
 .btn-secondary:hover {

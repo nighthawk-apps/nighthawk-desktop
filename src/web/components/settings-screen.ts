@@ -33,6 +33,15 @@ export class SettingsScreen extends LitElement {
       padding: 16px;
       margin-bottom: 12px;
     }
+    h2.screen-title {
+      margin: 0 0 16px;
+      font-family: var(--font-family-display);
+      font-size: var(--font-size-xl);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-header);
+    }
     h3 {
       margin: 0 0 12px;
       font-size: var(--font-size-lg);
@@ -236,6 +245,7 @@ export class SettingsScreen extends LitElement {
     const p = this.prefs;
     if (!p) return html`<p>Loading…</p>`;
     return html`
+      <h2 class="screen-title">Settings</h2>
       <div class="card">
         <h3>Appearance</h3>
         <label>Theme</label>

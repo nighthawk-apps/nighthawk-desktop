@@ -11,6 +11,7 @@ export class MainApp extends LitElement {
     | "unlock-error"
     | "ready" = "loading";
   @state() private activeTab = "wallet";
+  @state() private transferTab: "send" | "receive" = "send";
   @state() private network = "testnet";
   @state() private sync = "";
   @state() private mining = "";
@@ -125,7 +126,7 @@ export class MainApp extends LitElement {
       case "chat":
         return html`<chat-screen></chat-screen>`;
       case "transfer":
-        return html`<transfer-flow></transfer-flow>`;
+        return html`<transfer-flow .initialTab=${this.transferTab}></transfer-flow>`;
       case "dao":
         return html`<dao-screen></dao-screen>`;
       case "mine":
@@ -142,6 +143,10 @@ export class MainApp extends LitElement {
       default:
         return html`<wallet-screen
           @sync-update=${(e: CustomEvent) => (this.sync = e.detail)}
+          @open-transfer=${(e: CustomEvent<"send" | "receive">) => {
+            this.transferTab = e.detail;
+            this.activeTab = "transfer";
+          }}
         ></wallet-screen>`;
     }
   }

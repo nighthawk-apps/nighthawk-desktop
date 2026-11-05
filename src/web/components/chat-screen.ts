@@ -16,19 +16,12 @@ import {
   lexChat,
   peerNickIndex,
 } from "../lib/chat-chrome";
+import {
+  DEFAULT_PUBLIC_CHANNELS,
+  DEFAULT_SELECTED_CHANNEL,
+} from "../lib/chat-defaults";
 
-/** Match mobile DarkfiChatDefaults.DEFAULT_PUBLIC_CHANNELS. */
-const CHANNELS = [
-  "#dev",
-  "#media",
-  "#hackers",
-  "#memes",
-  "#philosophy",
-  "#markets",
-  "#math",
-  "#random",
-  "#lunardao",
-];
+const CHANNELS = [...DEFAULT_PUBLIC_CHANNELS];
 
 /** Canonical channel key: leading `#`, lowercased (IRC channels are case-insensitive). */
 function chanKey(channel: string): string {
@@ -43,7 +36,7 @@ function sameChannel(a: string, b: string): boolean {
 
 @customElement("chat-screen")
 export class ChatScreen extends LitElement {
-  @state() private channel = "#random";
+  @state() private channel = DEFAULT_SELECTED_CHANNEL;
   @state() private channelsList = [...CHANNELS];
   @state() private status = "stopped";
   @state() private messages: ChatMessage[] = [];
@@ -754,7 +747,7 @@ export class ChatScreen extends LitElement {
             (c) => !sameChannel(c, leaving),
           );
           if (this.channelsList.length === 0) {
-            this.channelsList = ["#random"];
+            this.channelsList = [DEFAULT_SELECTED_CHANNEL];
           }
           this.loadChannel(this.channelsList[0]);
           this.pushSystem(`Left channel: ${leaving}`);
