@@ -429,7 +429,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop 3.0.14 — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop 3.1.3 — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}
