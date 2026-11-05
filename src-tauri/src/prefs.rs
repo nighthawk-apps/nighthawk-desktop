@@ -36,14 +36,14 @@ pub struct Prefs {
     /// Active multi-wallet profile id (`default` = legacy app-root layout).
     #[serde(default = "default_wallet_id", alias = "active_wallet_id")]
     pub active_wallet_id: String,
-    /// When true, UnifOMR-only sync (no supplemental trial decrypt).
-    /// Default true. Turn off in settings to receive from `drk`.
+    /// Experimental UnifOMR. Default false: padded trial decryption.
+    /// Not maintained until DarkFi mainnet contracts are live.
     #[serde(default = "default_strict_omr_only", alias = "strict_omr_only")]
     pub strict_omr_only: bool,
 }
 
 fn default_strict_omr_only() -> bool {
-    true
+    false
 }
 
 fn default_fee_tier() -> String {
@@ -89,15 +89,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_strict_omr_only_is_on() {
-        assert!(default_strict_omr_only());
-        assert!(Prefs::default().strict_omr_only);
+    fn default_strict_omr_only_is_off() {
+        assert!(!default_strict_omr_only());
+        assert!(!Prefs::default().strict_omr_only);
         assert!(Prefs::default().use_tor);
         let parsed: Prefs = serde_json::from_str(
             r#"{"network":"testnet","lightwalletUrl":"http://127.0.0.1:9067","stratumUrl":"x","useTor":true,"torSocksPort":9150,"mineThreads":1,"chatNick":"n","birthdayHeight":0}"#,
         )
         .unwrap();
-        assert!(parsed.strict_omr_only);
+        assert!(!parsed.strict_omr_only);
     }
 }
 

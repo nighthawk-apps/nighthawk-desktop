@@ -98,7 +98,7 @@ export class SettingsScreen extends LitElement {
     super.connectedCallback();
     this.prefs = await api.getPrefs();
     if (this.prefs && this.prefs.strictOmrOnly === undefined) {
-      this.prefs.strictOmrOnly = true;
+      this.prefs.strictOmrOnly = false;
     }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
@@ -325,7 +325,7 @@ export class SettingsScreen extends LitElement {
               this.requestUpdate();
             }}
           />
-          Strict UnifOMR sync (no trial-decrypt fallback)
+          Experimental UnifOMR (off by default; both wallets must register on this server)
         </label>
         <p class="msg">
           On by default: only payments with UnifOMR clues are discovered —
