@@ -1,15 +1,15 @@
 use crate::address_book::{self, AddressBookEntry};
-use crate::paths::{cache_path, darkirc_path, ensure_dirs, wallet_db_path, Network};
-use crate::prefs::{load_prefs as load_prefs_file, save_prefs, Prefs};
+use crate::paths::{Network, cache_path, darkirc_path, ensure_dirs, wallet_db_path};
+use crate::prefs::{Prefs, load_prefs as load_prefs_file, save_prefs};
 use crate::secure_store;
 use crate::state::{AppState, MinerHandle};
 use crate::wallets;
 use darkfi_mobile_ffi::{
-    chacha_decrypt_dm, chacha_encrypt_dm, darkirc_connection_phase, darkirc_status,
-    generate_darkfi_mnemonic, generate_dm_keypair, is_arti_running, redact_sync_error,
-    send_chat_message, set_network_storage_dir, start_arti_proxy, start_darkirc, stop_arti_proxy,
-    stop_darkirc, validate_darkfi_mnemonic, DarkfiWalletHandle, DarkfiWalletNativeError,
-    DarkircEventCallback, DarkircTransport, DrkBootstrapConfig, ReorgEvent, ReorgEventCallback,
+    DarkfiWalletHandle, DarkfiWalletNativeError, DarkircEventCallback, DarkircTransport,
+    DrkBootstrapConfig, ReorgEvent, ReorgEventCallback, chacha_decrypt_dm, chacha_encrypt_dm,
+    darkirc_connection_phase, darkirc_status, generate_darkfi_mnemonic, generate_dm_keypair,
+    is_arti_running, redact_sync_error, send_chat_message, set_network_storage_dir,
+    start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc, validate_darkfi_mnemonic,
 };
 use serde::Serialize;
 use std::path::PathBuf;

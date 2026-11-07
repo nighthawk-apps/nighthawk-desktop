@@ -1,4 +1,4 @@
-use crate::paths::{prefs_path, Network};
+use crate::paths::{Network, prefs_path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;

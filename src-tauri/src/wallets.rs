@@ -2,7 +2,7 @@
 
 use crate::paths::{app_root, apply_wallet_profile, wallets_registry_path};
 use crate::prefs::{load_prefs, save_prefs};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;

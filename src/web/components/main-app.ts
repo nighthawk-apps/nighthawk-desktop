@@ -114,6 +114,7 @@ export class MainApp extends LitElement {
       import("./wallet-screen"),
       import("./transfer-flow"),
       import("./chat-screen"),
+      import("./dex-screen"),
       import("./dao-screen"),
       import("./mine-screen"),
       import("./settings-screen"),
@@ -127,6 +128,8 @@ export class MainApp extends LitElement {
         return html`<chat-screen></chat-screen>`;
       case "transfer":
         return html`<transfer-flow .initialTab=${this.transferTab}></transfer-flow>`;
+      case "dex":
+        return html`<dex-screen></dex-screen>`;
       case "dao":
         return html`<dao-screen></dao-screen>`;
       case "mine":
@@ -184,7 +187,7 @@ export class MainApp extends LitElement {
       ></status-banner>
       <main>${this.content()}</main>
       <app-nav
-        active=${this.activeTab}
+        active=${this.activeTab === "transfer" ? "wallet" : this.activeTab}
         @tab-change=${(e: CustomEvent) => (this.activeTab = e.detail)}
       ></app-nav>
     `;

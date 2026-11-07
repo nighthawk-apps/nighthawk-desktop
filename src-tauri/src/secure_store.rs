@@ -9,11 +9,11 @@
 //! The app opens the wallet automatically on launch — no unlock screen.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
-use anyhow::{anyhow, Context, Result};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use anyhow::{Context, Result, anyhow};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use parking_lot::Mutex;
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
@@ -119,9 +119,10 @@ fn read_keyring_secret(account: &str) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Get or create a master key from the OS keychain.
-/// Returns `None` if the keychain is unavailable.
-fn keychain_master_key() -> Option<[u8; 32]> {
+/// Read an existing master key from the OS keychain. Never creates one —
+/// minting during decrypt replaces a lost key with a random mismatch and
+/// surfaces as "Corrupt vault" while poisoning the keyring entry.
+fn read_keychain_master_key() -> Option<[u8; 32]> {
     let account = keyring_account();
     if let Some(key) = read_keyring_secret(&account) {
         return Some(key);
@@ -134,6 +135,16 @@ fn keychain_master_key() -> Option<[u8; 32]> {
         }
         return Some(key);
     }
+    None
+}
+
+/// Get or create a master key from the OS keychain (write / create path only).
+/// Returns `None` if the keychain is unavailable.
+fn ensure_keychain_master_key() -> Option<[u8; 32]> {
+    if let Some(key) = read_keychain_master_key() {
+        return Some(key);
+    }
+    let account = keyring_account();
     let entry = keyring::Entry::new(KEYRING_SERVICE, &account).ok()?;
     match entry.get_password() {
         Ok(hex_str) => {
@@ -146,11 +157,18 @@ fn keychain_master_key() -> Option<[u8; 32]> {
             Some(key)
         }
         Err(keyring::Error::NoEntry) => {
-            // Generate a new master key and store it.
             let mut key = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut key);
             if entry.set_password(&hex::encode(key)).is_ok() {
-                Some(key)
+                // Round-trip so a silent Secret Service failure cannot leave
+                // ciphertext that will never decrypt after restart.
+                match read_keyring_secret(&account) {
+                    Some(stored) if stored == key => Some(key),
+                    _ => {
+                        let _ = entry.delete_credential();
+                        None
+                    }
+                }
             } else {
                 None
             }
@@ -207,7 +225,7 @@ fn file_master_key() -> Option<[u8; 32]> {
 /// New vaults require the OS keychain. `vault.key` is read-only for legacy files
 /// so we never write the master key next to the ciphertext.
 fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
-    if let Some(master) = keychain_master_key() {
+    if let Some(master) = ensure_keychain_master_key() {
         return Ok((mix_master(&master, salt), true, false));
     }
     Err(anyhow!(
@@ -218,7 +236,7 @@ fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
 
 fn derive_key_for_read(salt: &[u8], meta: &VaultMeta) -> [u8; 32] {
     if meta.keychain_backed {
-        if let Some(master) = keychain_master_key() {
+        if let Some(master) = read_keychain_master_key() {
             return mix_master(&master, salt);
         }
     }
@@ -321,8 +339,10 @@ fn decrypt_payload() -> Result<VaultPayload> {
     let key = derive_key_for_read(&salt, &meta);
     if !key_matches_meta(&key, &meta.key_hash) {
         // Lost keychain / file key: try the other sources, then legacy PBKDF2.
+        // Never call ensure_keychain_master_key here — that would mint a
+        // fresh key that cannot open this vault.
         for candidate in [
-            keychain_master_key().map(|m| mix_master(&m, &salt)),
+            read_keychain_master_key().map(|m| mix_master(&m, &salt)),
             file_master_key().map(|m| mix_master(&m, &salt)),
             Some(derive_key_pbkdf2(&salt)),
         ]
@@ -334,6 +354,12 @@ fn decrypt_payload() -> Result<VaultPayload> {
                 let plain = open_seal(&candidate, &blob)?;
                 return serde_json::from_slice(&plain).context("parse vault payload");
             }
+        }
+        if meta.keychain_backed && read_keychain_master_key().is_none() {
+            return Err(anyhow!(
+                "Vault key missing from OS keychain — wipe local data and \
+                 create or restore the wallet again"
+            ));
         }
         return Err(anyhow!("Corrupt vault"));
     }
@@ -483,5 +509,22 @@ mod tests {
         let b = mix_master(&master, &[2u8; 16]);
         assert_ne!(a, b);
         assert_ne!(a, master);
+    }
+
+    #[test]
+    fn keychain_round_trip_persists() {
+        let account = format!("test_roundtrip:{}", std::process::id());
+        let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) else {
+            return;
+        };
+        let _ = entry.delete_credential();
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        if entry.set_password(&hex::encode(key)).is_err() {
+            return;
+        }
+        let stored = read_keyring_secret(&account).expect("read back after set");
+        assert_eq!(stored, key);
+        let _ = entry.delete_credential();
     }
 }

@@ -21,7 +21,7 @@ import {
   DEFAULT_SELECTED_CHANNEL,
 } from "../lib/chat-defaults";
 
-const CHANNELS = [...DEFAULT_PUBLIC_CHANNELS];
+const CHANNELS: string[] = [...DEFAULT_PUBLIC_CHANNELS];
 
 /** Canonical channel key: leading `#`, lowercased (IRC channels are case-insensitive). */
 function chanKey(channel: string): string {
@@ -36,8 +36,8 @@ function sameChannel(a: string, b: string): boolean {
 
 @customElement("chat-screen")
 export class ChatScreen extends LitElement {
-  @state() private channel = DEFAULT_SELECTED_CHANNEL;
-  @state() private channelsList = [...CHANNELS];
+  @state() private channel: string = DEFAULT_SELECTED_CHANNEL;
+  @state() private channelsList: string[] = [...CHANNELS];
   @state() private status = "stopped";
   @state() private messages: ChatMessage[] = [];
   @state() private draft = "";
