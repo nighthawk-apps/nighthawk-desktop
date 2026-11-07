@@ -164,6 +164,10 @@
   --color-accent-deep: #12809a;
   --color-accent-muted: #9aebff;
   --color-on-accent: #041018;
+  /* Wallhaven wallpaper magenta — chat channel / conversation selection */
+  --color-chat-selection: #6b1a6b;
+  --color-chat-selection-bright: #c94bb8;
+  --color-chat-selection-on: #ffd6f6;
   --color-secondary-fill: rgba(26, 16, 36, 0.8);
   --color-secondary-fill-highlight: rgba(42, 20, 48, 0.86);
   --color-ink-panel: rgba(10, 12, 20, 0.8);
@@ -177,7 +181,7 @@
   --color-callout-on: #f4fbff;
   --color-accent-subtle-container: rgba(16, 40, 51, 0.86);
   --color-overlay: rgba(0, 0, 0, 0.5);
-  --color-highlight: rgba(92, 225, 255, 0.16);
+  --color-highlight: rgba(107, 26, 107, 0.28);
 }
 
 *, *::before, *::after {

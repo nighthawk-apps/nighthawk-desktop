@@ -203,6 +203,15 @@ export class ChatScreen extends LitElement {
       color: var(--color-text-header);
       padding: 8px 10px;
     }
+    select {
+      border-color: var(--color-chat-selection-bright, var(--color-steel-border));
+      background: var(--color-chat-selection, var(--color-elevated));
+      color: var(--color-chat-selection-on, var(--color-text-header));
+    }
+    select:focus {
+      outline: 2px solid var(--color-chat-selection-bright, var(--color-accent));
+      outline-offset: 1px;
+    }
     button.primary {
       background: var(--color-accent);
       color: var(--color-on-accent);
@@ -399,11 +408,17 @@ export class ChatScreen extends LitElement {
       font-size: var(--font-size-xs);
     }
     .badge {
-      background: var(--color-accent);
-      color: var(--color-on-accent);
+      background: var(--color-chat-selection-bright, var(--color-accent));
+      color: var(--color-chat-selection-on, var(--color-on-accent));
       border-radius: 999px;
       padding: 0 6px;
       font-weight: 700;
+    }
+    .contact.selected,
+    .contact:has(button:focus) {
+      background: var(--color-chat-selection, rgba(107, 26, 107, 0.45));
+      border-radius: var(--border-radius-md);
+      padding: 4px 6px;
     }
   `;
 
@@ -937,7 +952,11 @@ export class ChatScreen extends LitElement {
                     <div class="contacts">
                       ${this.dmContacts.map(
                         (c) => html`
-                          <div class="contact">
+                          <div
+                            class="contact ${c.publicB58 === this.peerPublic
+                              ? "selected"
+                              : ""}"
+                          >
                             <button
                               class="primary"
                               @click=${() => this.selectContact(c)}
