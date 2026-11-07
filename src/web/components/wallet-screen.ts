@@ -131,10 +131,11 @@ export class WalletScreen extends LitElement {
     .actions button.outline {
       flex: 1;
       margin: 0;
-      background: transparent;
+      /* Match chat Channels/Direct FilterChip: 8px corners + translucent selected fill */
+      background: color-mix(in srgb, var(--color-accent) 38%, transparent);
       color: var(--color-text-header);
-      border: 1.5px solid var(--color-accent);
-      border-radius: var(--border-radius-md);
+      border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+      border-radius: var(--border-radius-md, 8px);
       padding: 12px 14px;
       font-weight: 600;
       text-transform: uppercase;
@@ -288,7 +289,7 @@ export class WalletScreen extends LitElement {
     await navigator.clipboard.writeText(this.address);
   }
 
-  private openTransfer(tab: "send" | "receive") {
+  private openTransfer(tab: "request" | "receive" | "send") {
     this.dispatchEvent(
       new CustomEvent("open-transfer", {
         detail: tab,
@@ -359,15 +360,18 @@ export class WalletScreen extends LitElement {
           </p>`
         : null}
       <div class="actions">
+        <button class="outline" @click=${() => this.openTransfer("request")}>
+          Request
+        </button>
         <button class="outline" @click=${() => this.openTransfer("receive")}>
-          Receive money
+          Receive
         </button>
         <button
           class="outline"
           ?disabled=${!(snap ? spendReady(snap) : false)}
           @click=${() => this.openTransfer("send")}
         >
-          Send money
+          Send
         </button>
       </div>
       <div class="card">

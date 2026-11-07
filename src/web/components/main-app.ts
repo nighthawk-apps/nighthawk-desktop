@@ -11,7 +11,7 @@ export class MainApp extends LitElement {
     | "unlock-error"
     | "ready" = "loading";
   @state() private activeTab = "wallet";
-  @state() private transferTab: "send" | "receive" = "send";
+  @state() private transferTab: "request" | "receive" | "send" = "receive";
   @state() private network = "testnet";
   @state() private sync = "";
   @state() private mining = "";
@@ -143,7 +143,7 @@ export class MainApp extends LitElement {
       default:
         return html`<wallet-screen
           @sync-update=${(e: CustomEvent) => (this.sync = e.detail)}
-          @open-transfer=${(e: CustomEvent<"send" | "receive">) => {
+          @open-transfer=${(e: CustomEvent<"request" | "receive" | "send">) => {
             this.transferTab = e.detail;
             this.activeTab = "transfer";
           }}

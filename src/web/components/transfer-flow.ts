@@ -3,10 +3,12 @@ import { customElement, property, state } from "lit/decorators.js";
 import "./send-flow";
 import "./receive-flow";
 
+type TransferTab = "request" | "receive" | "send";
+
 @customElement("transfer-flow")
 export class TransferFlow extends LitElement {
-  @property({ attribute: false }) initialTab: "send" | "receive" = "send";
-  @state() private tab: "send" | "receive" = "send";
+  @property({ attribute: false }) initialTab: TransferTab = "receive";
+  @state() private tab: TransferTab = "receive";
 
   static styles = css`
     :host {
@@ -21,8 +23,9 @@ export class TransferFlow extends LitElement {
     button {
       flex: 1;
       padding: 12px 14px;
-      border-radius: var(--border-radius-md);
-      border: 1.5px solid var(--color-accent);
+      /* Match chat Channels/Direct selected chip (8px, not pill) */
+      border-radius: var(--border-radius-md, 8px);
+      border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
       background: transparent;
       color: var(--color-text-header);
       font-family: inherit;
@@ -32,9 +35,9 @@ export class TransferFlow extends LitElement {
       cursor: pointer;
     }
     button.active {
-      border-color: var(--color-accent);
+      background: color-mix(in srgb, var(--color-accent) 38%, transparent);
+      border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
       color: var(--color-text-header);
-      box-shadow: inset 0 0 0 1px var(--color-accent);
     }
   `;
 
@@ -45,22 +48,31 @@ export class TransferFlow extends LitElement {
   }
 
   render() {
+    // Wallet hub order: Request → Receive → Send
     return html`
       <div class="tabs">
         <button
-          class=${this.tab === "send" ? "active" : ""}
-          @click=${() => (this.tab = "send")}
+          class=${this.tab === "request" ? "active" : ""}
+          @click=${() => (this.tab = "request")}
         >
-          Send money
+          Request
         </button>
         <button
           class=${this.tab === "receive" ? "active" : ""}
           @click=${() => (this.tab = "receive")}
         >
-          Receive money
+          Receive
+        </button>
+        <button
+          class=${this.tab === "send" ? "active" : ""}
+          @click=${() => (this.tab = "send")}
+        >
+          Send
         </button>
       </div>
-      ${this.tab === "send" ? html`<send-flow></send-flow>` : html`<receive-flow></receive-flow>`}
+      ${this.tab === "send"
+        ? html`<send-flow></send-flow>`
+        : html`<receive-flow></receive-flow>`}
     `;
   }
 }

@@ -35,11 +35,16 @@ export class DaoScreen extends LitElement {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
-    h2 {
+    /* Match settings-screen .screen-title (Dex/Settings hub title language). */
+    h2.screen-title {
       margin: 0;
-      font-size: var(--font-size-2xl);
+      font-family: var(--font-family-display);
+      font-size: var(--font-size-xl);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       color: var(--color-text-header);
     }
     .card {
@@ -319,7 +324,7 @@ export class DaoScreen extends LitElement {
   render() {
     return html`
       <div class="header-row">
-        <h2>DAO Hub</h2>
+        <h2 class="screen-title">DAO</h2>
         <button class="secondary" ?disabled=${this.loading} @click=${this.refreshDaos}>
           ${this.loading ? "Refreshing…" : "Refresh DAOs"}
         </button>
