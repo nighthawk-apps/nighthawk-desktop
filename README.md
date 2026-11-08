@@ -10,7 +10,7 @@
 - **Tauri 2** Rust host
 - Same **`darkfi-mobile-ffi`** UniFFI crate as Android (upstream `drk` transfer, trial-decrypt sync, DarkIRC, send/receive). Sent-tx session cache is FIFO-capped (10,000; updates do not refresh eviction). Reorg UI `txs_affected` is the wallet history row count (`block_height > rewind`), not CLI log-line length.
 - **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
-- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `8af61b3f0` pays fees from tx-local change when that output covers the fee
+- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `44ec78b6e` pays fees from tx-local change when that output covers the fee
 - Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service). Legacy v2 vaults used a static PBKDF2 constant. **No app PIN**; the wallet opens automatically. Treat the data directory as sensitive.
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book
