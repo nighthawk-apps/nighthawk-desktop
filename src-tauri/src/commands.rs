@@ -276,7 +276,7 @@ pub(crate) fn maybe_e2e_restore_from_file() {
         tracing::error!("e2e restore file was present but the phrase is invalid");
         return;
     }
-    let pass = secure_store::generate_wallet_pass();
+    let pass = secure_store::wallet_pass_for_mnemonic(&mnemonic);
     match secure_store::create_vault(&mnemonic, &pass, false) {
         Ok(()) => tracing::info!("e2e restore: vault created"),
         Err(e) => tracing::error!("e2e restore failed: {e}"),
@@ -309,7 +309,7 @@ async fn persist_and_open(
         prefs.lightwallet_url = url;
     }
     prefs.stratum_url = network.default_stratum().to_string();
-    let wallet_pass = secure_store::generate_wallet_pass();
+    let wallet_pass = secure_store::wallet_pass_for_mnemonic(&mnemonic);
     secure_store::create_vault(&mnemonic, &wallet_pass, overwrite).map_err(map_err)?;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs.clone();

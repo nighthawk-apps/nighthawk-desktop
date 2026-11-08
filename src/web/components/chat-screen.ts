@@ -193,6 +193,32 @@ export class ChatScreen extends LitElement {
       flex-wrap: wrap;
       flex-shrink: 0;
     }
+    .chrome-actions {
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+      gap: 0;
+    }
+    .chrome-actions button.icon {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--color-chat-selection-bright, var(--color-text-header));
+      cursor: pointer;
+      font-size: 1.15rem;
+      line-height: 1;
+      border-radius: var(--border-radius-md);
+    }
+    .chrome-actions button.icon:hover {
+      background: var(--color-elevated);
+      border-color: var(--color-steel-border);
+    }
     select,
     button,
     input {
@@ -880,6 +906,36 @@ export class ChatScreen extends LitElement {
     this.messages = this.channelMessages[key];
   }
 
+  private openNewDm() {
+    this.dmMode = true;
+    this.showToast("New conversation — paste a peer key or pick a contact");
+  }
+
+  private openRequest() {
+    this.dispatchEvent(
+      new CustomEvent("open-transfer", {
+        detail: "request",
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private openNetworkInfo() {
+    this.showToast(
+      `Network: ${ChatScreen.phaseLabel(this.status)}${this.nick ? ` · @${this.nick}` : ""}`,
+    );
+  }
+
+  private openChatSettings() {
+    this.dispatchEvent(
+      new CustomEvent("open-chat-settings", {
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   render() {
     return html`
       <div class="top">
@@ -914,6 +970,40 @@ export class ChatScreen extends LitElement {
         ${this.nick
           ? html`<span class="nick-chip" title="Current nick">@${this.nick}</span>`
           : null}
+        <div class="chrome-actions" role="toolbar" aria-label="Chat actions">
+          <button
+            class="icon"
+            title="New conversation"
+            aria-label="New conversation"
+            @click=${this.openNewDm}
+          >
+            +
+          </button>
+          <button
+            class="icon"
+            title="Request"
+            aria-label="Request"
+            @click=${this.openRequest}
+          >
+            ⎘
+          </button>
+          <button
+            class="icon"
+            title="Network"
+            aria-label="Network"
+            @click=${this.openNetworkInfo}
+          >
+            ℹ
+          </button>
+          <button
+            class="icon"
+            title="Chat Settings"
+            aria-label="Chat Settings"
+            @click=${this.openChatSettings}
+          >
+            ⚙
+          </button>
+        </div>
       </div>
       ${this.dmMode
         ? html`

@@ -398,7 +398,22 @@ fn legacy_delete_all() {
     }
 }
 
-/// Random 32-byte wallet pass (SQLCipher), Base64 — same pattern as mobile.
+/// Deterministic 32-byte wallet pass (SQLCipher), Base64 — aligned across Android, iOS, and Desktop.
+/// Derived as HMAC-SHA256("nighthawk-drk-wallet-pass-v1", normalized_phrase).
+pub fn wallet_pass_for_mnemonic(mnemonic: &[String]) -> String {
+    use hmac::digest::Mac;
+    type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+
+    let phrase = mnemonic.join(" ").trim().to_lowercase();
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(b"nighthawk-drk-wallet-pass-v1")
+        .expect("HMAC can take key of any size");
+    mac.update(phrase.as_bytes());
+    let result = mac.finalize().into_bytes();
+    B64.encode(result)
+}
+
+/// Random 32-byte wallet pass (SQLCipher), Base64 — legacy fallback.
+#[allow(dead_code)]
 pub fn generate_wallet_pass() -> String {
     let mut buf = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut buf);

@@ -292,6 +292,29 @@ export class SendFlow extends LitElement {
 
   render() {
     return html`
+      <label>Token</label>
+      <select
+        .value=${this.tokenId}
+        @change=${(e: Event) =>
+          (this.tokenId = (e.target as HTMLSelectElement).value)}
+      >
+        <option value="">DRK (native)</option>
+        ${this.tokens.map(
+          (t) => html`
+            <option value=${t.tokenId}>
+              ${t.displayLabel || t.tokenId.slice(0, 12)}…
+              (${formatDrkAtomic(t.balanceAtomic)})
+            </option>
+          `,
+        )}
+      </select>
+      <label>Amount</label>
+      <input
+        .value=${this.amount}
+        placeholder="0.0"
+        @input=${(e: Event) =>
+          (this.amount = (e.target as HTMLInputElement).value)}
+      />
       <label>Address book</label>
       <select
         @change=${(e: Event) => {
@@ -334,28 +357,6 @@ export class SendFlow extends LitElement {
         />
       </div>
       ${this.scanHint ? html`<p class="hint">${this.scanHint}</p>` : null}
-      <label>Token</label>
-      <select
-        .value=${this.tokenId}
-        @change=${(e: Event) =>
-          (this.tokenId = (e.target as HTMLSelectElement).value)}
-      >
-        <option value="">DRK (native)</option>
-        ${this.tokens.map(
-          (t) => html`
-            <option value=${t.tokenId}>
-              ${t.displayLabel || t.tokenId.slice(0, 12)}…
-              (${formatDrkAtomic(t.balanceAtomic)})
-            </option>
-          `,
-        )}
-      </select>
-      <label>Amount</label>
-      <input
-        .value=${this.amount}
-        @input=${(e: Event) =>
-          (this.amount = (e.target as HTMLInputElement).value)}
-      />
       <label>Memo (optional, ${utf8ByteLength(this.memo)}/${MAX_PAYMENT_MEMO_BYTES} UTF-8 bytes)</label>
       <textarea
         rows="2"

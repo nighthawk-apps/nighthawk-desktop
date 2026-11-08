@@ -1,5 +1,5 @@
 import { LitElement, html, css } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import {
   api,
   type Network,
@@ -10,6 +10,8 @@ import { applyTheme, currentTheme, type NighthawkTheme } from "../lib/theme";
 
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
+  /** When opened from chat chrome, show "Chat Settings" as the screen title. */
+  @property({ type: String }) screenTitle = "Settings";
   @state() private prefs: Prefs | null = null;
   @state() private backup: string[] = [];
   @state() private backupCopied = false;
@@ -245,7 +247,7 @@ export class SettingsScreen extends LitElement {
     const p = this.prefs;
     if (!p) return html`<p>Loading…</p>`;
     return html`
-      <h2 class="screen-title">Settings</h2>
+      <h2 class="screen-title">${this.screenTitle}</h2>
       <div class="card">
         <h3>Appearance</h3>
         <label>Theme</label>

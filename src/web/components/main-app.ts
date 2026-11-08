@@ -12,6 +12,7 @@ export class MainApp extends LitElement {
     | "ready" = "loading";
   @state() private activeTab = "wallet";
   @state() private transferTab: "request" | "receive" | "send" = "receive";
+  @state() private settingsTitle = "Settings";
   @state() private network = "testnet";
   @state() private sync = "";
   @state() private mining = "";
@@ -122,10 +123,21 @@ export class MainApp extends LitElement {
     this.screensReady = true;
   }
 
+  private openSettings(title = "Settings") {
+    this.settingsTitle = title;
+    this.activeTab = "settings";
+  }
+
   private content() {
     switch (this.activeTab) {
       case "chat":
-        return html`<chat-screen></chat-screen>`;
+        return html`<chat-screen
+          @open-chat-settings=${() => this.openSettings("Chat Settings")}
+          @open-transfer=${(e: CustomEvent<"request" | "receive" | "send">) => {
+            this.transferTab = e.detail;
+            this.activeTab = "transfer";
+          }}
+        ></chat-screen>`;
       case "transfer":
         return html`<transfer-flow .initialTab=${this.transferTab}></transfer-flow>`;
       case "dex":
@@ -138,6 +150,7 @@ export class MainApp extends LitElement {
         ></mine-screen>`;
       case "settings":
         return html`<settings-screen
+          .screenTitle=${this.settingsTitle}
           @prefs-changed=${async () => {
             const p = await api.getPrefs();
             this.network = p.network;
@@ -188,7 +201,13 @@ export class MainApp extends LitElement {
       <main>${this.content()}</main>
       <app-nav
         active=${this.activeTab === "transfer" ? "wallet" : this.activeTab}
-        @tab-change=${(e: CustomEvent) => (this.activeTab = e.detail)}
+        @tab-change=${(e: CustomEvent) => {
+          const tab = e.detail as string;
+          this.activeTab = tab;
+          if (tab === "settings") {
+            this.settingsTitle = "Settings";
+          }
+        }}
       ></app-nav>
     `;
   }
