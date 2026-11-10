@@ -3,7 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-nav")
 export class AppNav extends LitElement {
-  @property() active = "wallet";
+  @property() active = "chat";
 
   static styles = css`
     :host {

@@ -10,7 +10,7 @@ export class MainApp extends LitElement {
     | "onboarding"
     | "unlock-error"
     | "ready" = "loading";
-  @state() private activeTab = "wallet";
+  @state() private activeTab = "chat";
   @state() private transferTab: "request" | "receive" | "send" = "receive";
   @state() private settingsTitle = "Settings";
   @state() private network = "testnet";
