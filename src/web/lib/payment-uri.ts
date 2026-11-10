@@ -1,4 +1,4 @@
-import { isValidDrkAmount } from "./amount";
+import { isValidDrkAmount } from "./amount.ts";
 
 /** DarkFi payment URI: `drk:<address>?amount=&memo=` (memo is UTF-8, then base64). */
 
@@ -105,6 +105,26 @@ export function parsePaymentUri(raw: string): PaymentUri | null {
   } catch {
     return null;
   }
+}
+
+/** Build a `drk:` invoice. Memo is UTF-8 then standard base64, matching {@link parsePaymentUri}. */
+export function buildPaymentUri(
+  address: string,
+  amount?: string,
+  memo?: string,
+): string {
+  const params = new URLSearchParams();
+  const trimmedAmount = amount?.trim();
+  if (trimmedAmount) params.set("amount", trimmedAmount);
+  const trimmedMemo = memo?.trim();
+  if (trimmedMemo) {
+    const bytes = textEncoder.encode(truncateUtf8Bytes(trimmedMemo));
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    params.set("memo", btoa(bin));
+  }
+  const query = params.toString();
+  return query ? `drk:${address}?${query}` : `drk:${address}`;
 }
 
 /** Apply pasted text: if `drk:` URI, fill fields; else treat as address. */

@@ -1,8 +1,10 @@
 import {
   CHAT_CHROME,
+  decideFud,
   hasFud,
   isOwnNick,
   lexChat,
+  parseFud,
   peerNickIndex,
   threadIsEncrypted,
 } from "./chat-chrome.ts";
@@ -40,6 +42,23 @@ if (spans[1]?.kind !== "url" || spans[1].value !== "https://dark.fi/docs") {
 }
 if (!hasFud("fud://abc")) {
   throw new Error("fud lexer missed fud://");
+}
+
+const offer = parseFud("fud://Abcd/notes.txt");
+if (!offer || offer.infoHash !== "abcd" || offer.fileName !== "notes.txt") {
+  throw new Error(`parseFud failed: ${JSON.stringify(offer)}`);
+}
+if (parseFud("fud://ab/../x")) {
+  throw new Error("path traversal must be rejected");
+}
+if (decideFud(true, true, offer) !== "allowed") {
+  throw new Error("tor + enabled should queue");
+}
+if (decideFud(false, true, offer) !== "disabled") {
+  throw new Error("toggle off should disable");
+}
+if (decideFud(true, false, offer) !== "needsPrivateTransport") {
+  throw new Error("clearnet should be rejected");
 }
 
 console.log("chat-chrome.test.ts ok");

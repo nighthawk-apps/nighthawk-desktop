@@ -119,6 +119,10 @@ pub fn wallets_registry_path() -> PathBuf {
 }
 
 pub fn address_book_path() -> PathBuf {
+    wallet_data_root().join("address_book.db")
+}
+
+pub fn legacy_address_book_path() -> PathBuf {
     wallet_data_root().join("address_book.json")
 }
 

@@ -114,6 +114,70 @@
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Light: mist neutrals and a graphite accent (Android Light). */
+[data-theme="light"] {
+  --color-moonlit: #e8eaed;
+  --color-charcoal-deep: #dde2e8;
+  --color-charcoal-raised: #f7f8fa;
+  --color-elevated: #eef1f5;
+  --color-steel-border: #c5ccd4;
+  --color-steel-border-muted: #adb6bf;
+  --color-accent: #2c333a;
+  --color-accent-pressed: #1c2228;
+  --color-accent-deep: #12171c;
+  --color-accent-muted: #5c6570;
+  --color-on-accent: #f7f8fa;
+  --color-secondary-fill: #d7dee6;
+  --color-secondary-fill-highlight: #c9d2dc;
+  --color-ink-panel: #e4e9ef;
+  --color-ink-panel-lift: #d7dee6;
+  --color-text-header: #1f2832;
+  --color-text-body: #1f2832;
+  --color-text-muted: #5c6570;
+  --color-navigation-muted: #7a8490;
+  --color-track-muted: #adb6bf;
+  --color-callout-fill: #e4e9ef;
+  --color-callout-on: #5c6570;
+  --color-accent-subtle-container: #d7dee6;
+  --color-dangerous: #b3261e;
+  --color-on-dangerous: #ffffff;
+  --color-dangerous-banner-bg: #fdecec;
+  --color-dangerous-banner-fg: #7a1b14;
+  --color-overlay: rgba(0, 0, 0, 0.2);
+  --color-highlight: rgba(44, 51, 58, 0.12);
+}
+
+/* Midnight: deeper base, violet accent (Android Midnight). */
+[data-theme="midnight"] {
+  --color-moonlit: #05060b;
+  --color-charcoal-deep: #090e17;
+  --color-charcoal-raised: #101827;
+  --color-elevated: #172032;
+  --color-steel-border: #303848;
+  --color-steel-border-muted: #252c38;
+  --color-accent: #9b87f5;
+  --color-accent-pressed: #6b55c4;
+  --color-accent-deep: #0b0816;
+  --color-accent-muted: #b8a8ff;
+  --color-on-accent: #0b0816;
+  --color-secondary-fill: #242c3a;
+  --color-secondary-fill-highlight: #2c3545;
+  --color-ink-panel: #101827;
+  --color-ink-panel-lift: #172032;
+  --color-text-header: #eae4ff;
+  --color-text-body: #c5cbd9;
+  --color-text-muted: #939aaf;
+  --color-navigation-muted: #c5cbd9;
+  --color-track-muted: #252c38;
+  --color-callout-fill: #1e2838;
+  --color-callout-on: #dde2ee;
+  --color-accent-subtle-container: #221c34;
+  --color-dangerous: #cf6679;
+  --color-on-dangerous: #1c1b1f;
+  --color-overlay: rgba(0, 0, 0, 0.45);
+  --color-highlight: rgba(155, 135, 245, 0.18);
+}
+
 /* Paper: white reading theme. Source Serif 4 for titles, Source Sans 3 for text. */
 [data-theme="paper"] {
   --color-moonlit: #FFFFFF;

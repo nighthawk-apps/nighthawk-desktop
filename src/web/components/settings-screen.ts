@@ -7,6 +7,7 @@ import {
   type WalletProfiles,
 } from "../lib/api";
 import { applyTheme, currentTheme, type NighthawkTheme } from "../lib/theme";
+import { fudOffersEnabled, setFudOffersEnabled } from "../lib/chat-chrome";
 
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
@@ -259,10 +260,21 @@ export class SettingsScreen extends LitElement {
             applyTheme(next);
           }}
         >
-          <option value="stealth">Stealth — dark, Outfit and Source Sans 3</option>
-          <option value="paper">Paper — white, Source Serif 4 and Source Sans 3</option>
           <option value="cyberpunk">Cyberpunk — enter nighthawk with style</option>
+          <option value="stealth">Stealth — dark, Outfit and Source Sans 3</option>
+          <option value="midnight">Midnight — deeper base, violet accent</option>
+          <option value="light">Light — mist neutrals, graphite accent</option>
+          <option value="paper">Paper — white, Source Serif 4 and Source Sans 3</option>
         </select>
+        <label class="row">
+          <input
+            type="checkbox"
+            .checked=${fudOffersEnabled()}
+            @change=${(e: Event) =>
+              setFudOffersEnabled((e.target as HTMLInputElement).checked)}
+          />
+          Allow fud:// file offers (queued locally, Tor only, not downloaded)
+        </label>
       </div>
       <div class="card">
         <h3>Network</h3>

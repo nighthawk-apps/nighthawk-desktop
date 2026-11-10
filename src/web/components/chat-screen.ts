@@ -11,10 +11,14 @@ import {
   type DmContact,
 } from "../lib/dm-contacts";
 import {
+  decideFud,
+  fudOffersEnabled,
   hasFud,
   isOwnNick,
   lexChat,
+  parseFud,
   peerNickIndex,
+  queueFud,
 } from "../lib/chat-chrome";
 import {
   DEFAULT_PUBLIC_CHANNELS,
@@ -584,6 +588,35 @@ export class ChatScreen extends LitElement {
     if (this.touchTimer) window.clearTimeout(this.touchTimer);
   }
 
+  private async queueOffer(text: string) {
+    const spanned = lexChat(text).find((span) => span.kind === "fud");
+    const uri =
+      (spanned?.kind === "fud" ? parseFud(spanned.value) : null) ?? parseFud(text);
+    let privateTransport = false;
+    try {
+      privateTransport = (await api.getPrefs()).useTor;
+    } catch {
+      privateTransport = false;
+    }
+    switch (decideFud(fudOffersEnabled(), privateTransport, uri)) {
+      case "allowed":
+        if (uri) {
+          queueFud(uri);
+          this.showToast(`Queued ${uri.fileName ?? uri.infoHash}. The file is not downloaded.`);
+        }
+        break;
+      case "disabled":
+        this.showToast("File offers are off. Turn them on in Settings.");
+        break;
+      case "needsPrivateTransport":
+        this.showToast("File offers need Tor. Clearnet is rejected.");
+        break;
+      case "invalid":
+        this.showToast("That file offer is not a valid fud:// link.");
+        break;
+    }
+  }
+
   private copyMessage(text: string) {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text);
@@ -1100,9 +1133,15 @@ export class ChatScreen extends LitElement {
                 <span class=${nickClass}>&lt;${m.nick}&gt;</span>
                 <span class="content">${this.renderChatBody(m.message)}</span>
                 ${hasFud(m.message)
-                  ? html`<span class="fud-hint"
-                      >File transfer (fud) is not available in this build</span
-                    >`
+                  ? html`<button
+                      class="fud-hint"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this.queueOffer(m.message);
+                      }}
+                    >
+                      Queue file offer
+                    </button>`
                   : null}
               </div>
             `;

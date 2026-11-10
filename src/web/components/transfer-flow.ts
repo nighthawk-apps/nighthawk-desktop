@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./send-flow";
 import "./receive-flow";
+import "./request-flow";
 
 type TransferTab = "request" | "receive" | "send";
 
@@ -72,7 +73,9 @@ export class TransferFlow extends LitElement {
       </div>
       ${this.tab === "send"
         ? html`<send-flow></send-flow>`
-        : html`<receive-flow></receive-flow>`}
+        : this.tab === "request"
+          ? html`<request-flow></request-flow>`
+          : html`<receive-flow></receive-flow>`}
     `;
   }
 }

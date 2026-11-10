@@ -1455,6 +1455,7 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Testnet));
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Mainnet));
     let _ = std::fs::remove_file(crate::paths::address_book_path());
+    let _ = std::fs::remove_file(crate::paths::legacy_address_book_path());
     let _ = std::fs::remove_file(dir.join("vault.dat"));
     let _ = std::fs::remove_file(dir.join("vault.meta.json"));
     let _ = std::fs::remove_file(dir.join("vault.key"));

@@ -1,13 +1,14 @@
 {
   "name": "nighthawk-app-desktop",
   "private": true,
-  "version": "3.1.8",
+  "version": "3.1.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --experimental-strip-types src/web/lib/payment-uri.test.ts && node --experimental-strip-types src/web/lib/theme.test.ts && node --experimental-strip-types src/web/lib/chat-chrome.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
