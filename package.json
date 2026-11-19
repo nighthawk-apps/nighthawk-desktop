@@ -8,11 +8,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --experimental-strip-types src/web/lib/payment-uri.test.ts && node --experimental-strip-types src/web/lib/theme.test.ts && node --experimental-strip-types src/web/lib/chat-chrome.test.ts"
+    "test": "node --experimental-strip-types src/web/lib/payment-uri.test.ts && node --experimental-strip-types src/web/lib/theme.test.ts && node --experimental-strip-types src/web/lib/chat-chrome.test.ts && node --experimental-strip-types src/web/lib/amount.test.ts && node --experimental-strip-types src/web/lib/chat-defaults.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
-    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-opener": "^2.7.3",
     "@tauri-apps/plugin-shell": "^2.6.0",
     "@types/qrcode": "^1.5.6",
     "jsqr": "^1.4.0",

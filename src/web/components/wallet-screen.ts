@@ -11,6 +11,11 @@ import {
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { formatDrkAtomic } from "../lib/amount";
 import { formatInvokeError } from "../lib/api";
+import {
+  formatLightSyncBanner,
+  formatLightSyncMethod,
+  isLightSyncLive,
+} from "../lib/sync-label";
 
 @customElement("wallet-screen")
 export class WalletScreen extends LitElement {
@@ -28,7 +33,19 @@ export class WalletScreen extends LitElement {
   @state() private reorgHeight: number | null = null;
   @state() private refreshing = false;
   private unlistenReorg?: UnlistenFn;
-  private pollTimer?: number;
+  private onShellSync = (e: Event) => {
+    const snap = (e as CustomEvent<LightSyncState>).detail;
+    if (!snap) return;
+    this.applySync(snap);
+    void api
+      .walletBalance()
+      .then((b) => {
+        this.balance = b;
+      })
+      .catch(() => {
+        /* ignore transient balance poll error */
+      });
+  };
 
   static styles = css`
     :host {
@@ -174,19 +191,18 @@ export class WalletScreen extends LitElement {
       this.reorgHeight = e.rewoundTo;
     });
     await this.reload();
-    // Poll light-sync while wallet screen is open (desktop has no bg sync).
-    this.pollTimer = window.setInterval(() => this.pollSync(), 4000);
+    window.addEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unlistenReorg?.();
-    if (this.pollTimer) window.clearInterval(this.pollTimer);
+    window.removeEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
   /** The method sticks from the last good cycle; only a live session is green. */
   private lwdLive(snap: LightSyncState): boolean {
-    return ["Synced", "Syncing", "Scanning"].includes(snap.status);
+    return isLightSyncLive(snap);
   }
 
   private methodClass(snap: LightSyncState): string {
@@ -198,12 +214,7 @@ export class WalletScreen extends LitElement {
   }
 
   private methodLabel(snap: LightSyncState): string {
-    const m = snap.syncMethod || snap.syncType || "Unknown";
-    const base = /unifomr|omr/i.test(m) ? "UnifOMR" : /trial/i.test(m) ? "Trial decrypt" : m;
-    if (snap.status === "Connecting") return `${base} · connecting`;
-    if (snap.status === "Degraded") return `${base} · fallback`;
-    if (!this.lwdLive(snap)) return `${base} · not connected`;
-    return base;
+    return formatLightSyncMethod(snap);
   }
 
   private progressPct(snap: LightSyncState): number {
@@ -211,21 +222,9 @@ export class WalletScreen extends LitElement {
     return Math.min(100, Math.round((snap.scannedHeight / snap.chainTip) * 100));
   }
 
-  private async pollSync() {
-    try {
-      const snap = await api.walletLightSync();
-      this.applySync(snap);
-      // Soft refresh balance occasionally without full tx reload
-      this.balance = await api.walletBalance();
-    } catch {
-      /* ignore transient poll errors */
-    }
-  }
-
   private applySync(snap: LightSyncState) {
     this.syncDetail = snap;
-    const method = this.methodLabel(snap);
-    this.sync = `${method} · ${snap.scannedHeight}/${snap.chainTip} · ${snap.statusMessage}`;
+    this.sync = formatLightSyncBanner(snap);
     this.dispatchEvent(
       new CustomEvent("sync-update", {
         detail: this.sync,

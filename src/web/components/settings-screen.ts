@@ -1,5 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   api,
   type Network,
@@ -23,6 +24,7 @@ export class SettingsScreen extends LitElement {
   @state() private theme: NighthawkTheme = currentTheme();
   @state() private newWalletLabel = "";
   @state() private renameLabel = "";
+  @state() private appVersion = "";
 
   static styles = css`
     :host {
@@ -114,6 +116,11 @@ export class SettingsScreen extends LitElement {
     }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
+    try {
+      this.appVersion = await getVersion();
+    } catch {
+      this.appVersion = "";
+    }
   }
 
   private async save() {
@@ -443,7 +450,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop 3.1.4 — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop ${this.appVersion || "3.1.10"} — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

@@ -6,10 +6,10 @@
 
 use crate::paths::{address_book_path, legacy_address_book_path};
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -63,27 +63,17 @@ fn get_address_book_key() -> Result<[u8; 32]> {
         }
     }
 
-    // Fallback: machine-local key in wallet_data_root() (e.g. headless/CI)
-    let key_file = data_root.join(".addrbook.key");
-    if key_file.exists() {
-        if let Ok(bytes) = fs::read(&key_file) {
-            if bytes.len() == 32 {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(&bytes);
-                return Ok(key);
-            }
+    // Fail closed when OS keychain is unavailable; never persist raw encryption keys to disk.
+    #[cfg(test)]
+    {
+        if data_root.to_string_lossy().contains("nh_test_") {
+            return Ok([0x42u8; 32]);
         }
     }
 
-    let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
-    let _ = fs::write(&key_file, key);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600));
-    }
-    Ok(key)
+    anyhow::bail!(
+        "OS keychain unavailable for address book encryption key; refusing unkeyed or plaintext-key fallback"
+    )
 }
 
 fn load() -> Result<AddressBookFile> {

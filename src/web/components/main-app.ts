@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { api, formatInvokeError } from "../lib/api";
+import { formatLightSyncBanner } from "../lib/sync-label";
 import "./onboarding-flow";
 
 @customElement("main-app")
@@ -18,6 +19,7 @@ export class MainApp extends LitElement {
   @state() private mining = "";
   @state() private error = "";
   @state() private screensReady = false;
+  private syncTimer?: number;
 
   static styles = css`
     :host {
@@ -83,12 +85,39 @@ export class MainApp extends LitElement {
       }
       await this.ensureScreens();
       this.phase = "ready";
+      this.startSyncPolling();
       const prefs = await api.getPrefs();
       this.network = prefs.network;
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
       // Existing vault must never fall through to Create (that overwrites vault.dat).
       this.phase = exists ? "unlock-error" : "onboarding";
+    }
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.syncTimer) {
+      window.clearInterval(this.syncTimer);
+      this.syncTimer = undefined;
+    }
+  }
+
+  private startSyncPolling() {
+    if (this.syncTimer) window.clearInterval(this.syncTimer);
+    void this.pollLightSync();
+    this.syncTimer = window.setInterval(() => void this.pollLightSync(), 4000);
+  }
+
+  private async pollLightSync() {
+    try {
+      const snap = await api.walletLightSync();
+      this.sync = formatLightSyncBanner(snap);
+      window.dispatchEvent(
+        new CustomEvent("nighthawk-sync-updated", { detail: snap }),
+      );
+    } catch {
+      /* ignore transient background sync poll errors */
     }
   }
 
@@ -99,6 +128,7 @@ export class MainApp extends LitElement {
       await api.openWallet();
       await this.ensureScreens();
       this.phase = "ready";
+      this.startSyncPolling();
       const prefs = await api.getPrefs();
       this.network = prefs.network;
     } catch (e: unknown) {
@@ -186,6 +216,7 @@ export class MainApp extends LitElement {
         @wallet-ready=${async () => {
           await this.ensureScreens();
           this.phase = "ready";
+          this.startSyncPolling();
         }}
       ></onboarding-flow>`;
     }

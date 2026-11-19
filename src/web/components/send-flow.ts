@@ -32,7 +32,10 @@ export class SendFlow extends LitElement {
   @state() private saveLabel = "";
   @state() private scanHint = "";
   @state() private sync: LightSyncState | null = null;
-  private pollTimer: number | undefined;
+  private onShellSync = (e: Event) => {
+    const snap = (e as CustomEvent<LightSyncState>).detail;
+    if (snap) this.sync = snap;
+  };
 
   static styles = css`
     label {
@@ -113,7 +116,7 @@ export class SendFlow extends LitElement {
   override async connectedCallback() {
     super.connectedCallback();
     void this.pollSync();
-    this.pollTimer = window.setInterval(() => void this.pollSync(), 4000);
+    window.addEventListener("nighthawk-sync-updated", this.onShellSync);
     try {
       this.tokens = await api.listTokenBalances();
       this.book = await api.addressBookList();
@@ -200,7 +203,7 @@ export class SendFlow extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.pollTimer) window.clearInterval(this.pollTimer);
+    window.removeEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
   private async pollSync() {
@@ -391,7 +394,7 @@ export class SendFlow extends LitElement {
           ${this.busy ? "Sending…" : "Send"}
         </button>
       </div>
-      ${this.result ? html`<p class="msg ok">Tx: ${this.result}</p>` : null}
+      ${this.result ? html`<p class="msg ok">Broadcasted (in lightwalletd mempool, awaiting confirmation): ${this.result}</p>` : null}
       ${this.error ? html`<p class="msg err">${this.error}</p>` : null}
     `;
   }

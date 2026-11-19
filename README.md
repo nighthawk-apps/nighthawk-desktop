@@ -11,22 +11,24 @@
 - Same **`darkfi-mobile-ffi`** UniFFI crate as Android (upstream `drk` transfer, trial-decrypt sync, DarkIRC, send/receive). Sent-tx session cache is FIFO-capped (10,000; updates do not refresh eviction). Reorg UI `txs_affected` is the wallet history row count (`block_height > rewind`), not CLI log-line length.
 - **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
 - **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `44ec78b6e` pays fees from tx-local change when that output covers the fee
-- Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service). Legacy v2 vaults used a static PBKDF2 constant. **No app PIN**; the wallet opens automatically. Treat the data directory as sensitive.
+- Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service) and keychain-backed encrypted **address book** (`addrbook.db`; fails closed without plaintext disk fallback). **Auto-unlock / no app PIN** on desktop is an intentional design decision; treat the desktop user account and OS keychain as the unlock boundary.
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
-- Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book
+- Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book; light-sync polls continuously from the `main-app` shell across tabs, and **Send** displays **Broadcasted** only after lightwalletd confirms the transaction in the mempool
 - Bundled **xmrig** only. The Mine tab refuses a binary whose SHA-256 is not a shipped Nighthawk build, and it no longer falls back to a system `xmrig`. Stratum and other remote endpoints reject private and link-local hosts; loopback stays allowed for a local darkfid
 - Wallet, chat, and vault commands run against the wallet that is open in the app, not a process-global handle
-- **Tor on by default** for remote lightwalletd / chat (embedded Arti). Default testnet LWD is loopback `http://127.0.0.1:9067`; switch URL in Settings for a remote pin.
+- **Tor on by default** on desktop for remote lightwalletd / chat (embedded Arti). Default testnet LWD is Mac Studio ngrok TLS `https://epidermis-sandbox-marshland.ngrok-free.dev` with pinned leaf SHA-256 `c02faee24a8cf271aa91c28b942949ba10ec4413c6d427a598b15a5467978824`; switch URL/pin in Settings or run loopback `http://127.0.0.1:9067`.
 - **Trial decryption is the default.** Money notes, token mints, and compact DAO calls sync without a clue. Experimental UnifOMR is off in Settings. Turn it on only when both wallets are registered on the same lightwalletd. It is not maintained until DarkFi mainnet contracts are live. Embedded Tor is Arti 0.48.
 - **Localnet (2026-10-21):** 100/100 UnifOMR sends each way with Moonshine and with Android. Ten Moonshine `--no-omr` payments trial-decrypted (`E2E_FORCE_TRIAL=1`); the balance stayed put across eight further syncs. iOS was not in that run. Desktop finished at 2.5958 DRK, which is not enough for another 100-send pair (6.42 DRK if change is recovered).
 - UnifOMR Param2 limits: [`docs/unifomr_mvp_limits.md`](docs/unifomr_mvp_limits.md)
 
 ## Prerequisites
 
-- Rust toolchain, Node 20+, `pnpm`
-- macOS: Xcode CLT (for local macOS builds)
+- Rust toolchain (stable)
+- Node.js 20+ and `pnpm` (on macOS: `brew install node pnpm`)
+- macOS: Xcode 15+ / Command Line Tools (with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` if needed)
+- Sibling directory literally named `nighthawk-android-wallet` (provides `rust/darkfi-mobile-ffi`)
+- Sibling directory `darkfi-nighthawk-testnet` (via `git -C ../darkfi worktree add --detach ../darkfi-nighthawk-testnet origin/nighthawk-testnet` or symlink)
 - Reachable **darkfi-lightwalletd** (default testnet: `http://127.0.0.1:9067`; remote HTTPS still needs a TLS pin)
-- **Sibling directory literally named `nighthawk-android-wallet`** (Cargo path-depends on `../../nighthawk-android-wallet/rust/darkfi-mobile-ffi`).
 - For mining: **darkfid** with stratum (`:18347` testnet / `:8347` mainnet)
 
 ## Repository layout

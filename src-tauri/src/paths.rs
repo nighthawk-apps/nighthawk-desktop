@@ -27,9 +27,7 @@ impl Network {
 
     pub fn default_lwd(self) -> &'static str {
         match self {
-            // Loopback only — configure a real lightwalletd URL in Settings
-            // before using a remote network. Do not invent a production LWD.
-            Network::Testnet => "http://127.0.0.1:9067",
+            Network::Testnet => "https://epidermis-sandbox-marshland.ngrok-free.dev",
             Network::Mainnet => "http://127.0.0.1:9067",
         }
     }
@@ -37,7 +35,9 @@ impl Network {
     /// Leaf-cert SHA-256 pin for [`Self::default_lwd`] when it is remote HTTPS.
     pub fn default_lwd_tls_pin(self) -> Option<&'static str> {
         match self {
-            Network::Testnet => None,
+            Network::Testnet => {
+                Some("c02faee24a8cf271aa91c28b942949ba10ec4413c6d427a598b15a5467978824")
+            }
             Network::Mainnet => None,
         }
     }
