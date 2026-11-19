@@ -38,9 +38,12 @@ blake3 = "=1.8.3"
 argon2 = "0.5"
 url = "2"
 
-# Same UniFFI crate as the Android wallet. Path is the real tree, not a
-# symlink: Cargo resolves `third_party/darkfi` relative to the crate directory.
-# UniFFI 0.32.2 = crates.io latest (aligned with Android FFI).
+# Shared UniFFI crate (Android / iOS / desktop). UniFFI 0.32.2.
+# Cargo resolves this crate's `../../third_party/darkfi` paths from the
+# directory it opens, not from a symlink target. The checkout at
+# GitHub/darkfi-mobile-ffi is a symlink to this directory; depending on
+# the symlink would look for DarkFi outside the repo. iOS points its
+# rust/darkfi-mobile-ffi member at the same tree.
 darkfi-mobile-ffi = { path = "../../nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
 async-stream = "0.3.6"
 

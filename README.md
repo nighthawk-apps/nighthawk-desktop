@@ -4,13 +4,13 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-**3.01.10** (crate / Tauri semver **3.1.10**). Chat is the tab selected when you open the app. Same product line as the Android and iOS apps. Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.1.12** (crate / Tauri / `package.json`). Chat is the tab selected when you open the app. Same product line as the Android and iOS apps. DarkFi pin `9d7ceaf77` via shared `darkfi-mobile-ffi`. Aligns with Android/iOS 3.01.14, Moonshine 3.1.11, and lightwalletd 0.3.8. Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · Transfer · **DAO** · Mine · Settings). Wallet actions are **Request · Receive · Send**.
 - **Tauri 2** Rust host
 - Same **`darkfi-mobile-ffi`** UniFFI crate as Android (upstream `drk` transfer, trial-decrypt sync, DarkIRC, send/receive). Sent-tx session cache is FIFO-capped (10,000; updates do not refresh eviction). Reorg UI `txs_affected` is the wallet history row count (`block_height > rewind`), not CLI log-line length.
 - **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
-- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `44ec78b6e` pays fees from tx-local change when that output covers the fee
+- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `9d7ceaf77` pays fees from tx-local change when that output covers the fee
 - Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service) and keychain-backed encrypted **address book** (`addrbook.db`; fails closed without plaintext disk fallback). **Auto-unlock / no app PIN** on desktop is an intentional design decision; treat the desktop user account and OS keychain as the unlock boundary.
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM, address book; light-sync polls continuously from the `main-app` shell across tabs, and **Send** displays **Broadcasted** only after lightwalletd confirms the transaction in the mempool
@@ -18,7 +18,6 @@
 - Wallet, chat, and vault commands run against the wallet that is open in the app, not a process-global handle
 - **Tor on by default** on desktop for remote lightwalletd / chat (embedded Arti). Default testnet LWD is Mac Studio ngrok TLS `https://epidermis-sandbox-marshland.ngrok-free.dev` with pinned leaf SHA-256 `c02faee24a8cf271aa91c28b942949ba10ec4413c6d427a598b15a5467978824`; switch URL/pin in Settings or run loopback `http://127.0.0.1:9067`.
 - **Trial decryption is the default.** Money notes, token mints, and compact DAO calls sync without a clue. Experimental UnifOMR is off in Settings. Turn it on only when both wallets are registered on the same lightwalletd. It is not maintained until DarkFi mainnet contracts are live. Embedded Tor is Arti 0.48.
-- **Localnet (2026-10-21):** 100/100 UnifOMR sends each way with Moonshine and with Android. Ten Moonshine `--no-omr` payments trial-decrypted (`E2E_FORCE_TRIAL=1`); the balance stayed put across eight further syncs. iOS was not in that run. Desktop finished at 2.5958 DRK, which is not enough for another 100-send pair (6.42 DRK if change is recovered).
 - UnifOMR Param2 limits: [`docs/unifomr_mvp_limits.md`](docs/unifomr_mvp_limits.md)
 
 ## Prerequisites
@@ -134,6 +133,5 @@ Unlock wallet → Mine → set threads → Start. Payouts go to `primary_deposit
 
 ## Known issues
 
-1. Strict UnifOMR is the default. Clue-less payments (Moonshine `--no-omr`, upstream `drk`) stay invisible until strict mode is turned off. Forcing trial while strict mode is still on used to idle the scan cursor; trial now clears strict mode first, and a `GetBlockRange` hole does not mark missing blocks scanned.
-2. The 2026-10-21 localnet did not include iOS. This desktop build shares the Android UniFFI crate, so the trial-cursor fixes apply here after that crate is rebuilt.
-3. `git.dark.fi` returns HTTP 504. Do not clone DarkFi or its git deps from there. Use the Android `third_party/darkfi` pin and the GitLab / Codeberg / GitHub mirrors listed under Build.
+1. Experimental UnifOMR is **off** by default (padded trial decryption). Clue-less payments from upstream `drk` or Moonshine without UnifOMR sync via trial decrypt. Turning UnifOMR on requires both wallets registered on the same lightwalletd.
+2. `git.dark.fi` returns HTTP 504. Do not clone DarkFi or its git deps from there. Use the Android `third_party/darkfi` pin (`9d7ceaf77`) and the GitLab / Codeberg / GitHub mirrors listed under Build.

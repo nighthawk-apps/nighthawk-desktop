@@ -115,6 +115,12 @@ export class SendFlow extends LitElement {
 
   override async connectedCallback() {
     super.connectedCallback();
+    const staged = sessionStorage.getItem("nighthawk.chatPayUri");
+    if (staged) {
+      sessionStorage.removeItem("nighthawk.chatPayUri");
+      const parsed = applyRecipientPaste(staged);
+      if (parsed) this.applyParsed(parsed);
+    }
     void this.pollSync();
     window.addEventListener("nighthawk-sync-updated", this.onShellSync);
     try {

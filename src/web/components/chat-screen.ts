@@ -24,6 +24,13 @@ import {
   DEFAULT_PUBLIC_CHANNELS,
   DEFAULT_SELECTED_CHANNEL,
 } from "../lib/chat-defaults";
+import {
+  CHAT_PAY_URI_KEY,
+  findInvoice,
+  isClearnetHttp,
+  parseReceipt,
+} from "../lib/chat-wallet";
+import { buildPaymentUri } from "../lib/payment-uri";
 
 const CHANNELS: string[] = [...DEFAULT_PUBLIC_CHANNELS];
 
@@ -633,6 +640,7 @@ export class ChatScreen extends LitElement {
             href=${span.value}
             target="_blank"
             rel="noopener noreferrer"
+            @click=${(e: Event) => this.onChatLink(e, span.value)}
             >${span.value}</a
           >`;
         case "fud":
@@ -641,6 +649,46 @@ export class ChatScreen extends LitElement {
           return html`${span.value}`;
       }
     });
+  }
+
+  private onChatLink(e: Event, url: string) {
+    if (!isClearnetHttp(url)) return;
+    e.preventDefault();
+    const open = window.confirm(
+      "This http(s) link leaves Nym/Tor and can reveal your IP. Open it in the system browser?",
+    );
+    if (open) window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  private payInvoice(raw: string) {
+    sessionStorage.setItem(CHAT_PAY_URI_KEY, raw);
+    this.dispatchEvent(
+      new CustomEvent("open-transfer", {
+        detail: "send",
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private async postRequest() {
+    try {
+      const address = (await api.walletAddress()).trim();
+      if (!address) {
+        this.error = "Wallet address is not ready yet.";
+        return;
+      }
+      const amount = window.prompt("Amount (DRK, optional)") ?? "";
+      const memo = window.prompt("Memo (optional)") ?? "";
+      this.draft = buildPaymentUri(
+        address,
+        amount.trim() || undefined,
+        memo.trim() || undefined,
+      );
+      await this.send();
+    } catch (e: any) {
+      this.error = String(e);
+    }
   }
 
   private showToast(msg: string) {
@@ -990,6 +1038,7 @@ export class ChatScreen extends LitElement {
           title=${this.status}
         >
           ${ChatScreen.phaseLabel(this.status)}
+          · ${this.dmMode ? "Direct · E2E" : "Public channel"}
         </span>
         <label>
           <input
@@ -1143,6 +1192,30 @@ export class ChatScreen extends LitElement {
                       Queue file offer
                     </button>`
                   : null}
+                ${(() => {
+                  const invoice = findInvoice(m.message);
+                  if (!invoice) return null;
+                  return html`<div class="pay-card">
+                    <div>Payment request${invoice.amount ? html` · ${invoice.amount} DRK` : ""}</div>
+                    <button
+                      class="primary"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this.payInvoice(invoice.raw);
+                      }}
+                    >
+                      Pay
+                    </button>
+                  </div>`;
+                })()}
+                ${(() => {
+                  const receipt = parseReceipt(m.message);
+                  if (!receipt) return null;
+                  return html`<div class="pay-card">
+                    Payment ${receipt.phase} · ${receipt.amount}
+                    ${receipt.txId ? html`<div>${receipt.txId}</div>` : null}
+                  </div>`;
+                })()}
               </div>
             `;
           })}
@@ -1161,6 +1234,7 @@ export class ChatScreen extends LitElement {
           @input=${(e: Event) =>
             (this.draft = (e.target as HTMLInputElement).value)}
         />
+        <button @click=${() => this.postRequest()}>Request</button>
         <button class="primary" @click=${this.send}>Send</button>
       </div>
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

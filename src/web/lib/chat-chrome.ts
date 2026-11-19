@@ -55,18 +55,15 @@ export function bodyColor(isOwn: boolean): string {
   return isOwn ? CHAT_CHROME.bodyOutgoing : CHAT_CHROME.bodyIncoming;
 }
 
+/** 1:1 DMs only. A stored channel secret does not make a public #channel encrypted. */
 export function threadIsEncrypted(
   isDirectInbox: boolean,
   threadKey: string,
-  encryptedChannelNames: Iterable<string>,
+  _encryptedChannelNames: Iterable<string> = [],
 ): boolean {
-  if (isDirectInbox) return true;
-  const key = threadKey.toLowerCase();
-  if (!key) return false;
-  for (const name of encryptedChannelNames) {
-    if (name.toLowerCase() === key) return true;
-  }
-  return false;
+  if (!isDirectInbox) return false;
+  const key = threadKey.trim();
+  return key.length > 0 && !key.startsWith("#");
 }
 
 function trimTrailingPunctuation(value: string): string {

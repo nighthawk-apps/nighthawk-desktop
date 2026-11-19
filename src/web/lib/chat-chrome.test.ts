@@ -25,8 +25,11 @@ if (!threadIsEncrypted(true, "alice", [])) {
   throw new Error("direct inbox is encrypted");
 }
 
-if (!threadIsEncrypted(false, "#dev", ["#Dev"])) {
-  throw new Error("channel with stored secret is encrypted");
+if (threadIsEncrypted(false, "#dev", ["#Dev"])) {
+  throw new Error("public channel stays plaintext even with a stored secret");
+}
+if (threadIsEncrypted(true, "#dev", [])) {
+  throw new Error("a # name in the direct inbox is not a DM");
 }
 
 if (threadIsEncrypted(false, "#dev", [])) {
