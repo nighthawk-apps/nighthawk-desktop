@@ -1,8 +1,25 @@
 import { LitElement, html, css } from "lit";
-import { customElement } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
+import { t } from "../i18n";
 
 @customElement("dex-screen")
 export class DexScreen extends LitElement {
+  @state() private localeTick = 0;
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    super.disconnectedCallback();
+  }
+
+  private onLocale = () => {
+    this.localeTick++;
+  };
+
   static styles = css`
     :host {
       display: block;
@@ -32,9 +49,10 @@ export class DexScreen extends LitElement {
   `;
 
   render() {
+    void this.localeTick;
     return html`
-      <h2 class="screen-title">DEX</h2>
-      <p class="subtitle">Coming soon</p>
+      <h2 class="screen-title">${t("nav.dex")}</h2>
+      <p class="subtitle">${t("common.coming_soon")}</p>
       <p class="body">
         The DarkFi DEX will live here. Send, receive, and request stay on Wallet.
       </p>

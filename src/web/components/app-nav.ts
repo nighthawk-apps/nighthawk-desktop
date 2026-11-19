@@ -1,9 +1,25 @@
 import { LitElement, html, css } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
+import { t } from "../i18n";
 
 @customElement("app-nav")
 export class AppNav extends LitElement {
   @property() active = "chat";
+  @state() private localeTick = 0;
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    super.disconnectedCallback();
+  }
+
+  private onLocale = () => {
+    this.localeTick++;
+  };
 
   static styles = css`
     :host {
@@ -46,15 +62,16 @@ export class AppNav extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     // Order: Chat → Wallet → DEX → DAO → Mine → Settings
     // Transfer lives under Wallet (Request / Receive / Send).
     const tabs: Array<[string, string]> = [
-      ["chat", "Chat"],
-      ["wallet", "Wallet"],
-      ["dex", "DEX"],
-      ["dao", "DAO"],
-      ["mine", "Mine"],
-      ["settings", "Settings"],
+      ["chat", t("nav.chat")],
+      ["wallet", t("nav.wallet")],
+      ["dex", t("nav.dex")],
+      ["dao", t("nav.dao")],
+      ["mine", t("nav.mine")],
+      ["settings", t("nav.settings")],
     ];
     return html`
       <nav>

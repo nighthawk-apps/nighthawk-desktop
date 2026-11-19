@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { api, formatInvokeError } from "../lib/api";
 import { formatLightSyncBanner } from "../lib/sync-label";
+import { t } from "../i18n";
 import "./onboarding-flow";
 
 @customElement("main-app")
@@ -221,7 +222,7 @@ export class MainApp extends LitElement {
       ></onboarding-flow>`;
     }
     if (!this.screensReady) {
-      return html`<div class="center">Loading wallet…</div>`;
+      return html`<div class="center">${t("common.loading_wallet")}</div>`;
     }
     return html`
       <status-banner
@@ -236,7 +237,7 @@ export class MainApp extends LitElement {
           const tab = e.detail as string;
           this.activeTab = tab;
           if (tab === "settings") {
-            this.settingsTitle = "Settings";
+            this.settingsTitle = t("nav.settings");
           }
         }}
       ></app-nav>

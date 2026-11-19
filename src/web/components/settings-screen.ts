@@ -9,6 +9,13 @@ import {
 } from "../lib/api";
 import { applyTheme, currentTheme, type NighthawkTheme } from "../lib/theme";
 import { fudOffersEnabled, setFudOffersEnabled } from "../lib/chat-chrome";
+import {
+  getLocale,
+  setLocale,
+  supportedLocales,
+  t,
+  type LocaleCode,
+} from "../i18n";
 
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
@@ -25,6 +32,7 @@ export class SettingsScreen extends LitElement {
   @state() private newWalletLabel = "";
   @state() private renameLabel = "";
   @state() private appVersion = "";
+  @state() private locale: LocaleCode = getLocale();
 
   static styles = css`
     :host {
@@ -253,12 +261,26 @@ export class SettingsScreen extends LitElement {
 
   render() {
     const p = this.prefs;
-    if (!p) return html`<p>Loading…</p>`;
+    if (!p) return html`<p>${t("common.loading")}</p>`;
     return html`
-      <h2 class="screen-title">${this.screenTitle}</h2>
+      <h2 class="screen-title">${this.screenTitle === "Settings" ? t("nav.settings") : this.screenTitle}</h2>
       <div class="card">
-        <h3>Appearance</h3>
-        <label>Theme</label>
+        <h3>${t("settings.appearance")}</h3>
+        <label>${t("settings.language")}</label>
+        <select
+          .value=${this.locale}
+          @change=${(e: Event) => {
+            const next = (e.target as HTMLSelectElement).value as LocaleCode;
+            this.locale = next;
+            setLocale(next);
+            this.requestUpdate();
+          }}
+        >
+          ${supportedLocales.map(
+            (loc) => html`<option value=${loc.code}>${loc.label}</option>`,
+          )}
+        </select>
+        <label>${t("settings.theme")}</label>
         <select
           .value=${this.theme}
           @change=${(e: Event) => {
@@ -267,11 +289,11 @@ export class SettingsScreen extends LitElement {
             applyTheme(next);
           }}
         >
-          <option value="cyberpunk">Cyberpunk — enter nighthawk with style</option>
-          <option value="stealth">Stealth — dark, Outfit and Source Sans 3</option>
-          <option value="midnight">Midnight — deeper base, violet accent</option>
-          <option value="light">Light — mist neutrals, graphite accent</option>
-          <option value="paper">Paper — white, Source Serif 4 and Source Sans 3</option>
+          <option value="cyberpunk">${t("settings.theme_cyberpunk")}</option>
+          <option value="stealth">${t("settings.theme_stealth")}</option>
+          <option value="midnight">${t("settings.theme_midnight")}</option>
+          <option value="light">${t("settings.theme_light")}</option>
+          <option value="paper">${t("settings.theme_paper")}</option>
         </select>
         <label class="row">
           <input
@@ -280,20 +302,20 @@ export class SettingsScreen extends LitElement {
             @change=${(e: Event) =>
               setFudOffersEnabled((e.target as HTMLInputElement).checked)}
           />
-          Allow fud:// file offers (queued locally, Tor only, not downloaded)
+          ${t("settings.fud_offers")}
         </label>
       </div>
       <div class="card">
-        <h3>Network</h3>
+        <h3>${t("network.label")}</h3>
         <select
           .value=${p.network}
           @change=${(e: Event) =>
             this.switchNetwork((e.target as HTMLSelectElement).value as Network)}
         >
-          <option value="testnet">Testnet</option>
-          <option value="mainnet">Mainnet</option>
+          <option value="testnet">${t("network.testnet")}</option>
+          <option value="mainnet">${t("network.mainnet")}</option>
         </select>
-        <label>Lightwalletd URL</label>
+        <label>${t("settings.lwd_url")}</label>
         <input
           .value=${p.lightwalletUrl}
           @input=${(e: Event) => {
@@ -301,7 +323,7 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>LWD TLS pin (SHA-256 hex of leaf cert DER)</label>
+        <label>${t("settings.lwd_tls_pin")}</label>
         <input
           placeholder="Optional for localhost; required for remote HTTPS"
           .value=${p.lightwalletTlsPinSha256 ?? ""}
@@ -402,7 +424,7 @@ export class SettingsScreen extends LitElement {
               (this.newWalletLabel = (e.target as HTMLInputElement).value)}
           />
           <button class="secondary" @click=${this.createWalletProfile}>
-            Add wallet
+            ${t("wallet.add")}
           </button>
         </div>
         <div class="row">
