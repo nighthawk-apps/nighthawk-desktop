@@ -136,7 +136,12 @@ export class SettingsScreen extends LitElement {
     this.error = "";
     try {
       await api.setPrefs(this.prefs);
+      this.prefs = await api.getPrefs();
+      this.artiRunning = await api.artiStatus();
       this.message = "Preferences saved";
+      this.dispatchEvent(
+        new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
+      );
     } catch (e: any) {
       this.error = String(e);
     }
@@ -349,26 +354,38 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
+        <label>Privacy transport</label>
+        <select
+          .value=${p.useNym ? "nym" : p.useTor ? "tor" : "direct"}
+          @change=${(e: Event) => {
+            const mode = (e.target as HTMLSelectElement).value;
+            p.useNym = mode === "nym";
+            p.useTor = mode === "tor";
+            this.requestUpdate();
+          }}
+        >
+          <option value="tor">Tor (embedded Arti)</option>
+          <option value="nym">Nym mixnet</option>
+          <option value="direct">Direct (clearnet)</option>
+        </select>
         <label>Tor SOCKS port</label>
         <input
           type="number"
           .value=${String(p.torSocksPort)}
           @input=${(e: Event) => {
-            p.torSocksPort = Number((e.target as HTMLInputElement).value) || 9050;
+            p.torSocksPort = Number((e.target as HTMLInputElement).value) || 9150;
             this.requestUpdate();
           }}
         />
-        <label>
-          <input
-            type="checkbox"
-            .checked=${p.useTor}
-            @change=${(e: Event) => {
-              p.useTor = (e.target as HTMLInputElement).checked;
-              this.requestUpdate();
-            }}
-          />
-          Use Tor for chat / LWD when supported
-        </label>
+        <label>Nym SOCKS port</label>
+        <input
+          type="number"
+          .value=${String(p.nymSocksPort ?? 1080)}
+          @input=${(e: Event) => {
+            p.nymSocksPort = Number((e.target as HTMLInputElement).value) || 1080;
+            this.requestUpdate();
+          }}
+        />
         <label>
           <input
             type="checkbox"
@@ -381,9 +398,9 @@ export class SettingsScreen extends LitElement {
           Experimental UnifOMR (off by default; both wallets must register on this server)
         </label>
         <p class="msg">
-          On by default: only payments with UnifOMR clues are discovered —
-          faster and more private, but <code>drk</code> sends may not appear.
-          Turn off to receive from non-UnifOMR wallets (e.g. <code>drk</code>).
+          Off by default: when enabled, only payments with UnifOMR clues are
+          discovered — faster and more private, but <code>drk</code> sends may
+          not appear. Leave off to receive from all wallets via trial decryption.
         </p>
         <div class="row">
           <button @click=${this.save}>Save</button>
@@ -472,7 +489,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop ${this.appVersion || "3.1.10"} — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop ${this.appVersion || "3.1.12"} — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

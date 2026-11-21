@@ -44,13 +44,15 @@ export interface Prefs {
   stratumUrl: string;
   useTor: boolean;
   torSocksPort: number;
+  useNym?: boolean;
+  nymSocksPort?: number;
   mineThreads: number;
   chatNick: string;
   birthdayHeight: number;
   lightwalletTlsPinSha256: string | null;
   feeTier: FeeTier;
   activeWalletId: string;
-  /** UnifOMR-only sync (no trial-decrypt fallback). Default true. */
+  /** UnifOMR-only sync (no trial-decrypt fallback). Default false. */
   strictOmrOnly: boolean;
 }
 
@@ -166,6 +168,14 @@ export interface DmKeypair {
   publicB58: string;
 }
 
+export interface DmContactRecord {
+  id: string;
+  label: string;
+  publicB58: string;
+  lastSeenAt: number;
+  unread: number;
+}
+
 export interface AddressBookEntry {
   id: string;
   label: string;
@@ -268,9 +278,24 @@ export const api = {
   artiStart: () => invokeCmd<boolean>("arti_start"),
   artiStop: () => invokeCmd<void>("arti_stop"),
   artiStatus: () => invokeCmd<boolean>("arti_status"),
+  nymStatus: () => invokeCmd<string>("nym_status"),
+  transportSnapshot: () => invokeCmd<string>("transport_snapshot"),
+  setTransport: (mode: "nym" | "tor" | "direct") =>
+    invokeCmd<string>("set_transport", { mode }),
+  transportContinueWithoutNym: () =>
+    invokeCmd<string>("transport_continue_without_nym"),
 
   dmGenerateKeypair: () => invokeCmd<DmKeypair>("dm_generate_keypair"),
   dmLoadKeypair: () => invokeCmd<DmKeypair | null>("dm_load_keypair"),
+  dmContactsList: () => invokeCmd<DmContactRecord[]>("dm_contacts_list"),
+  dmContactsUpsert: (label: string, publicB58: string) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_upsert", { label, publicB58 }),
+  dmContactsRemove: (id: string) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_remove", { id }),
+  dmContactsClearUnread: (publicB58: string) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_clear_unread", { publicB58 }),
+  dmContactsMigrate: (legacy: DmContactRecord[]) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_migrate", { legacy }),
   dmEncrypt: (args: { theirPublicB58: string; plaintext: string }) =>
     invokeCmd<string>("dm_encrypt", { ...args }),
   dmDecrypt: (args: { theirPublicB58: string; ciphertextB58: string }) =>

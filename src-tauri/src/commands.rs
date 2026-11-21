@@ -7,15 +7,21 @@ use crate::wallets;
 use darkfi_mobile_ffi::{
     DarkfiWalletHandle, DarkfiWalletNativeError, DarkircEventCallback, DarkircTransport,
     DrkBootstrapConfig, ReorgEvent, ReorgEventCallback, chacha_decrypt_dm, chacha_encrypt_dm,
-    darkirc_connection_phase, darkirc_status, generate_darkfi_mnemonic, generate_dm_keypair,
-    is_arti_running, redact_sync_error, send_chat_message, set_network_storage_dir,
-    start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc, validate_darkfi_mnemonic,
+    clear_dm_contacts, darkirc_connection_phase, darkirc_status, generate_darkfi_mnemonic,
+    generate_dm_keypair, is_arti_running, is_nym_running, nym_status as ffi_nym_status,
+    redact_sync_error, register_dm_contact, send_chat_message, set_network_storage_dir,
+    start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc, stop_nym_proxy,
+    transport_continue_without_nym as ffi_transport_continue_without_nym,
+    transport_manager::{self, TransportKind},
+    transport_snapshot_json, unregister_dm_contact, validate_darkfi_mnemonic,
 };
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+use zeroize::Zeroizing;
 
 fn map_err(e: impl ToString) -> String {
     redact_sync_error(&e.to_string())
@@ -182,11 +188,112 @@ fn build_bootstrap(
         lightwallet_tls_pin_sha256: tls_pin,
         use_tor: prefs.use_tor,
         tor_socks_port: prefs.tor_socks_port,
-        use_nym: false,
-        nym_socks_port: 1080,
+        use_nym: prefs.use_nym,
+        nym_socks_port: prefs.nym_socks_port,
         darkfid_rpc_url: prefs.darkfid_rpc_url.clone(),
         strict_omr_only: prefs.strict_omr_only,
     })
+}
+
+fn transport_kind_for_prefs(prefs: &Prefs) -> TransportKind {
+    if prefs.use_nym {
+        TransportKind::Nym
+    } else if prefs.use_tor {
+        TransportKind::Tor
+    } else {
+        TransportKind::Direct
+    }
+}
+
+fn darkirc_transport_for_prefs(prefs: &Prefs) -> (DarkircTransport, u16) {
+    if transport_manager::session_direct() {
+        return (DarkircTransport::Direct, 0);
+    }
+    match transport_kind_for_prefs(prefs) {
+        TransportKind::Nym => (DarkircTransport::Nym, prefs.nym_socks_port),
+        TransportKind::Tor => (DarkircTransport::Tor, prefs.tor_socks_port),
+        TransportKind::Direct => (DarkircTransport::Direct, 0),
+    }
+}
+
+fn darkirc_is_active() -> bool {
+    !matches!(
+        darkirc_status().as_str(),
+        "not_running" | "stopped" | "failed" | "disabled"
+    )
+}
+
+fn wait_for_darkirc_idle(timeout: Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if matches!(
+            darkirc_status().as_str(),
+            "not_running" | "stopped" | "failed" | "disabled"
+        ) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn apply_transport_for_prefs(old: Option<&Prefs>, prefs: &Prefs) -> Result<(), String> {
+    ensure_dirs(prefs.network).map_err(map_err)?;
+    set_network_storage_dir(cache_path(prefs.network).to_string_lossy().to_string());
+    if let Some(prev) = old {
+        if prev.tor_socks_port != prefs.tor_socks_port && is_arti_running() {
+            stop_arti_proxy();
+        }
+        if prev.nym_socks_port != prefs.nym_socks_port && is_nym_running() {
+            stop_nym_proxy();
+        }
+    }
+    transport_manager::apply(
+        transport_kind_for_prefs(prefs),
+        prefs.nym_socks_port,
+        prefs.tor_socks_port,
+    )
+}
+
+fn restart_darkirc_for_prefs(app: &AppHandle, prefs: &Prefs) -> Result<(), String> {
+    ensure_dirs(prefs.network).map_err(map_err)?;
+    let path = darkirc_path(prefs.network).to_string_lossy().to_string();
+    let (transport, socks_port) = darkirc_transport_for_prefs(prefs);
+    let cb: Option<Box<dyn DarkircEventCallback>> =
+        Some(Box::new(TauriChatCb { app: app.clone() }));
+    start_darkirc(path, transport, socks_port, cb).map_err(ffi_err)
+}
+
+fn sync_dm_contacts_to_ffi(wallet_pass: &str) -> Result<(), String> {
+    clear_dm_contacts();
+    let Some(keys) = crate::dm_store::load(wallet_pass).map_err(map_err)? else {
+        return Ok(());
+    };
+    let my_secret = Zeroizing::new(bs58_decode(&keys.secret_b58)?);
+    let contacts = crate::dm_store::load_contacts(wallet_pass).map_err(map_err)?;
+    for contact in contacts {
+        if let Ok(their_public) = bs58_decode(&contact.public_b58)
+            && their_public.len() == 32
+        {
+            register_dm_contact(contact.label.clone(), my_secret.to_vec(), their_public)
+                .map_err(|e| format!("DM contact {} was not registered: {e}", contact.label))?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_dm_contacts_if_unlocked() {
+    if let Ok(wallet_pass) = secure_store::load_wallet_pass() {
+        let _ = sync_dm_contacts_to_ffi(&wallet_pass);
+    }
+}
+
+fn close_wallet_and_clear_session(state: &AppState) {
+    let old_handle = state.wallet.lock().take();
+    if let Some(handle) = old_handle {
+        let _ = handle.close();
+    }
+    clear_dm_contacts();
+    secure_store::clear_session();
 }
 
 fn open_handle(config: DrkBootstrapConfig) -> Result<Arc<DarkfiWalletHandle>, String> {
@@ -213,7 +320,11 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
 }
 
 #[tauri::command]
-pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String> {
+pub async fn set_prefs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    prefs: Prefs,
+) -> Result<(), String> {
     if !prefs.lightwallet_url.trim().is_empty() {
         validate_lwd_url(&prefs.lightwallet_url)?;
     }
@@ -226,21 +337,41 @@ pub fn set_prefs(state: State<'_, AppState>, prefs: Prefs) -> Result<(), String>
         }
     }
     let old = state.prefs.lock().clone();
-    let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
-        || old.use_tor != prefs.use_tor
+    let transport_changed = old.use_tor != prefs.use_tor
         || old.tor_socks_port != prefs.tor_socks_port
-        || old.lightwallet_tls_pin_sha256 != prefs.lightwallet_tls_pin_sha256
+        || old.use_nym != prefs.use_nym
+        || old.nym_socks_port != prefs.nym_socks_port
         || old.network != prefs.network;
+    let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
+        || old.lightwallet_tls_pin_sha256 != prefs.lightwallet_tls_pin_sha256
+        || transport_changed;
     save_prefs(&prefs).map_err(map_err)?;
     *state.network.lock() = prefs.network;
     if needs_wallet_reopen {
-        // LWD / Tor / TLS pin only apply at bootstrap — drop the open handle.
-        *state.wallet.lock() = None;
-        secure_store::clear_session();
+        // LWD / transport / TLS pin only apply at bootstrap — close the open handle.
+        close_wallet_and_clear_session(&state);
     } else if let Some(handle) = state.wallet.lock().as_ref().cloned() {
         handle.set_strict_omr_only(prefs.strict_omr_only);
     }
-    *state.prefs.lock() = prefs;
+    *state.prefs.lock() = prefs.clone();
+
+    if transport_changed {
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let was_darkirc_active = darkirc_is_active();
+            if was_darkirc_active {
+                let _ = stop_darkirc();
+                wait_for_darkirc_idle(Duration::from_secs(5));
+            }
+            apply_transport_for_prefs(Some(&old), &prefs)?;
+            if was_darkirc_active {
+                restart_darkirc_for_prefs(&app_clone, &prefs)?;
+            }
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|e| format!("Transport reconfigure interrupted: {e}"))??;
+    }
     Ok(())
 }
 
@@ -329,6 +460,7 @@ async fn persist_and_open(
     };
     attach_reorg_callback(app, &handle);
     *state.wallet.lock() = Some(handle);
+    sync_dm_contacts_if_unlocked();
     Ok(())
 }
 
@@ -403,6 +535,7 @@ async fn open_existing_wallet(app: &AppHandle, state: &AppState) -> Result<(), S
         .map_err(|e| format!("Wallet open interrupted: {e}"))??;
     attach_reorg_callback(app, &handle);
     *state.wallet.lock() = Some(handle);
+    sync_dm_contacts_if_unlocked();
     Ok(())
 }
 
@@ -814,6 +947,64 @@ pub fn arti_status() -> bool {
     is_arti_running()
 }
 
+#[tauri::command]
+pub fn nym_status() -> String {
+    ffi_nym_status()
+}
+
+#[tauri::command]
+pub fn transport_snapshot() -> String {
+    transport_snapshot_json()
+}
+
+#[tauri::command]
+pub async fn set_transport(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<String, String> {
+    let mut prefs = state.prefs.lock().clone();
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "nym" => {
+            prefs.use_nym = true;
+            prefs.use_tor = false;
+        }
+        "tor" => {
+            prefs.use_nym = false;
+            prefs.use_tor = true;
+        }
+        "direct" => {
+            prefs.use_nym = false;
+            prefs.use_tor = false;
+        }
+        other => return Err(format!("unknown transport mode: {other}")),
+    }
+    set_prefs(app, state, prefs).await?;
+    Ok(transport_snapshot_json())
+}
+
+#[tauri::command]
+pub async fn transport_continue_without_nym(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let prefs = state.prefs.lock().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let was_darkirc_active = darkirc_is_active();
+        if was_darkirc_active {
+            let _ = stop_darkirc();
+            wait_for_darkirc_idle(Duration::from_secs(5));
+        }
+        ffi_transport_continue_without_nym();
+        if was_darkirc_active {
+            restart_darkirc_for_prefs(&app, &prefs)?;
+        }
+        Ok::<_, String>(transport_snapshot_json())
+    })
+    .await
+    .map_err(|e| format!("Transport override interrupted: {e}"))?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmKeypairDto {
@@ -837,6 +1028,7 @@ pub fn dm_generate_keypair() -> Result<DmKeypairDto, String> {
         public_b58: k.public_b58.clone(),
     };
     crate::dm_store::save(&wallet_pass, &stored).map_err(map_err)?;
+    sync_dm_contacts_to_ffi(&wallet_pass)?;
     Ok(DmKeypairDto {
         public_b58: k.public_b58,
     })
@@ -846,23 +1038,77 @@ pub fn dm_generate_keypair() -> Result<DmKeypairDto, String> {
 pub fn dm_load_keypair() -> Result<Option<DmKeypairDto>, String> {
     let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
     let keys = crate::dm_store::load(&wallet_pass).map_err(map_err)?;
+    if keys.is_some() {
+        sync_dm_contacts_to_ffi(&wallet_pass)?;
+    }
     Ok(keys.map(|k| DmKeypairDto {
         public_b58: k.public_b58,
     }))
 }
 
 #[tauri::command]
+pub fn dm_contacts_list() -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    let contacts = crate::dm_store::load_contacts(&wallet_pass).map_err(map_err)?;
+    sync_dm_contacts_to_ffi(&wallet_pass)?;
+    Ok(contacts)
+}
+
+#[tauri::command]
+pub fn dm_contacts_upsert(
+    label: String,
+    public_b58: String,
+) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    let contacts =
+        crate::dm_store::upsert_contact(&wallet_pass, &label, &public_b58).map_err(map_err)?;
+    sync_dm_contacts_to_ffi(&wallet_pass)?;
+    Ok(contacts)
+}
+
+#[tauri::command]
+pub fn dm_contacts_remove(id: String) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    let (contacts, removed) =
+        crate::dm_store::remove_contact(&wallet_pass, &id).map_err(map_err)?;
+    if let Some(c) = removed {
+        unregister_dm_contact(c.label);
+    }
+    sync_dm_contacts_to_ffi(&wallet_pass)?;
+    Ok(contacts)
+}
+
+#[tauri::command]
+pub fn dm_contacts_clear_unread(
+    public_b58: String,
+) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    crate::dm_store::clear_unread(&wallet_pass, &public_b58).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn dm_contacts_migrate(
+    legacy: Vec<crate::dm_store::DmContactStored>,
+) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    let contacts =
+        crate::dm_store::migrate_legacy_contacts(&wallet_pass, legacy).map_err(map_err)?;
+    sync_dm_contacts_to_ffi(&wallet_pass)?;
+    Ok(contacts)
+}
+
+#[tauri::command]
 pub fn dm_encrypt(their_public_b58: String, plaintext: String) -> Result<String, String> {
-    let my_secret = load_dm_secret()?;
+    let my_secret = Zeroizing::new(load_dm_secret()?);
     let their_public = bs58_decode(&their_public_b58)?;
-    chacha_encrypt_dm(my_secret, their_public, plaintext).map_err(ffi_err)
+    chacha_encrypt_dm(my_secret.to_vec(), their_public, plaintext).map_err(ffi_err)
 }
 
 #[tauri::command]
 pub fn dm_decrypt(their_public_b58: String, ciphertext_b58: String) -> Result<String, String> {
-    let my_secret = load_dm_secret()?;
+    let my_secret = Zeroizing::new(load_dm_secret()?);
     let their_public = bs58_decode(&their_public_b58)?;
-    chacha_decrypt_dm(my_secret, their_public, ciphertext_b58).map_err(ffi_err)
+    chacha_decrypt_dm(my_secret.to_vec(), their_public, ciphertext_b58).map_err(ffi_err)
 }
 
 fn bs58_decode(s: &str) -> Result<Vec<u8>, String> {
@@ -912,8 +1158,7 @@ pub fn wallets_create(
             let _ = m.child.wait();
         }
     }
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
+    close_wallet_and_clear_session(&state);
     let profile = wallets::create_profile(label).map_err(map_err)?;
     let mut prefs = state.prefs.lock().clone();
     prefs.active_wallet_id = profile.id.clone();
@@ -930,8 +1175,7 @@ pub fn wallets_switch(state: State<'_, AppState>, wallet_id: String) -> Result<(
             let _ = m.child.wait();
         }
     }
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
+    close_wallet_and_clear_session(&state);
     wallets::switch_profile(&wallet_id).map_err(map_err)?;
     let mut prefs = state.prefs.lock().clone();
     prefs.active_wallet_id = wallet_id;
@@ -960,13 +1204,22 @@ pub async fn chat_start(app: AppHandle, state: State<'_, AppState>) -> Result<()
     let path = darkirc_path(network).to_string_lossy().to_string();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        set_network_storage_dir(cache_path(network).to_string_lossy().to_string());
+        let desired = transport_kind_for_prefs(&prefs);
+        if !transport_manager::session_direct() {
+            let proxy_missing = match desired {
+                TransportKind::Tor => !is_arti_running(),
+                TransportKind::Nym => !is_nym_running(),
+                TransportKind::Direct => false,
+            };
+            if transport_manager::effective_kind() != desired || proxy_missing {
+                transport_manager::apply(desired, prefs.nym_socks_port, prefs.tor_socks_port)?;
+            }
+        }
+        sync_dm_contacts_if_unlocked();
         let cb: Option<Box<dyn DarkircEventCallback>> = Some(Box::new(TauriChatCb { app }));
-        let transport = if prefs.use_tor {
-            DarkircTransport::Tor
-        } else {
-            DarkircTransport::Direct
-        };
-        start_darkirc(path, transport, prefs.tor_socks_port, cb).map_err(ffi_err)
+        let (transport, socks_port) = darkirc_transport_for_prefs(&prefs);
+        start_darkirc(path, transport, socks_port, cb).map_err(ffi_err)
     })
     .await
     .map_err(|e| format!("Chat start interrupted: {e}"))?
@@ -1383,18 +1636,35 @@ pub fn mine_stop(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_network(state: State<'_, AppState>, network: String) -> Result<(), String> {
+pub async fn set_network(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    network: String,
+) -> Result<(), String> {
     let network: Network = network.parse()?;
     let mut prefs = state.prefs.lock().clone();
+    let network_changed = prefs.network != network;
     prefs.network = network;
     prefs.stratum_url = network.default_stratum().to_string();
     prefs.lightwallet_url = network.default_lwd().to_string();
     prefs.lightwallet_tls_pin_sha256 = network.default_lwd_tls_pin().map(str::to_string);
     save_prefs(&prefs).map_err(map_err)?;
-    *state.prefs.lock() = prefs;
+    *state.prefs.lock() = prefs.clone();
     *state.network.lock() = network;
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
+    close_wallet_and_clear_session(&state);
+    if network_changed {
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if darkirc_is_active() {
+                let _ = stop_darkirc();
+                wait_for_darkirc_idle(Duration::from_secs(5));
+                restart_darkirc_for_prefs(&app_clone, &prefs)?;
+            }
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|e| format!("Network switch interrupted: {e}"))??;
+    }
     Ok(())
 }
 
@@ -1405,8 +1675,7 @@ pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String
     prefs.lightwallet_url = url;
     save_prefs(&prefs).map_err(map_err)?;
     *state.prefs.lock() = prefs;
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
+    close_wallet_and_clear_session(&state);
     Ok(())
 }
 
@@ -1449,8 +1718,7 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
             let _ = m.child.wait();
         }
     }
-    *state.wallet.lock() = None;
-    secure_store::clear_session();
+    close_wallet_and_clear_session(&state);
     let dir = crate::paths::wallet_data_root();
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Testnet));
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Mainnet));
@@ -1470,7 +1738,38 @@ pub fn initial_prefs() -> Prefs {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hashrate, validate_lwd_url};
+    use super::{
+        darkirc_transport_for_prefs, parse_hashrate, transport_kind_for_prefs, validate_lwd_url,
+    };
+    use crate::prefs::Prefs;
+    use darkfi_mobile_ffi::{DarkircTransport, transport_manager::TransportKind};
+
+    #[test]
+    fn transport_selection_prefers_nym_then_tor_then_direct() {
+        let mut prefs = Prefs::default();
+        assert!(prefs.use_tor);
+        assert!(!prefs.use_nym);
+        assert_eq!(transport_kind_for_prefs(&prefs), TransportKind::Tor);
+        assert_eq!(
+            darkirc_transport_for_prefs(&prefs),
+            (DarkircTransport::Tor, prefs.tor_socks_port)
+        );
+
+        prefs.use_nym = true;
+        assert_eq!(transport_kind_for_prefs(&prefs), TransportKind::Nym);
+        assert_eq!(
+            darkirc_transport_for_prefs(&prefs),
+            (DarkircTransport::Nym, prefs.nym_socks_port)
+        );
+
+        prefs.use_nym = false;
+        prefs.use_tor = false;
+        assert_eq!(transport_kind_for_prefs(&prefs), TransportKind::Direct);
+        assert_eq!(
+            darkirc_transport_for_prefs(&prefs),
+            (DarkircTransport::Direct, 0)
+        );
+    }
 
     #[test]
     fn parse_hashrate_h_per_s() {

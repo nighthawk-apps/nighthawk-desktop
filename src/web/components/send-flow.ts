@@ -8,7 +8,12 @@ import {
   type LightSyncState,
   type TokenBalance,
 } from "../lib/api";
-import { formatDrkAtomic, isValidDrkAmount } from "../lib/amount";
+import {
+  evaluateSendBalance,
+  formatDrkAtomic,
+  isValidDrkAmount,
+  parseDrkAtomic,
+} from "../lib/amount";
 import { formatInvokeError } from "../lib/api";
 import {
   applyRecipientPaste,
@@ -16,6 +21,14 @@ import {
   truncateUtf8Bytes,
   utf8ByteLength,
 } from "../lib/payment-uri";
+import {
+  CHAT_RECEIPT_EVENT,
+  consumeChatPayContext,
+  encodeReceiptForChat,
+  type ChatPayContext,
+  type ChatReceipt,
+  type ChatReceiptDetail,
+} from "../lib/chat-wallet";
 
 @customElement("send-flow")
 export class SendFlow extends LitElement {
@@ -32,6 +45,7 @@ export class SendFlow extends LitElement {
   @state() private saveLabel = "";
   @state() private scanHint = "";
   @state() private sync: LightSyncState | null = null;
+  private chatPayContext: ChatPayContext | null = null;
   private onShellSync = (e: Event) => {
     const snap = (e as CustomEvent<LightSyncState>).detail;
     if (snap) this.sync = snap;
@@ -115,11 +129,16 @@ export class SendFlow extends LitElement {
 
   override async connectedCallback() {
     super.connectedCallback();
-    const staged = sessionStorage.getItem("nighthawk.chatPayUri");
+    const staged = consumeChatPayContext();
     if (staged) {
-      sessionStorage.removeItem("nighthawk.chatPayUri");
-      const parsed = applyRecipientPaste(staged);
+      const parsed = applyRecipientPaste(staged.raw);
       if (parsed) this.applyParsed(parsed);
+      this.chatPayContext = staged.context ?? {
+        raw: staged.raw,
+        channel: "",
+        dmMode: false,
+        receiptId: `r-${Date.now()}`,
+      };
     }
     void this.pollSync();
     window.addEventListener("nighthawk-sync-updated", this.onShellSync);
@@ -243,6 +262,36 @@ export class SendFlow extends LitElement {
     }
   }
 
+  private emitChatReceipt(
+    phase: "broadcasted" | "failed",
+    address: string,
+    txId?: string,
+  ) {
+    if (!this.chatPayContext) return;
+    const receipt: ChatReceipt = {
+      id: this.chatPayContext.receiptId,
+      phase,
+      amount: this.amount.trim() || "0",
+      address,
+      memo: this.memo.trim() || undefined,
+      txId,
+    };
+    const encoded = encodeReceiptForChat(receipt);
+    const detail: ChatReceiptDetail = {
+      context: this.chatPayContext,
+      receipt,
+      encoded,
+    };
+    window.dispatchEvent(new CustomEvent(CHAT_RECEIPT_EVENT, { detail }));
+    this.dispatchEvent(
+      new CustomEvent("chat-receipt", {
+        detail,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private async send() {
     this.error = "";
     this.result = "";
@@ -253,6 +302,35 @@ export class SendFlow extends LitElement {
     }
     if (!isValidDrkAmount(this.amount)) {
       this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+      return;
+    }
+    const amountAtomic = parseDrkAtomic(this.amount.trim());
+    if (amountAtomic === null) {
+      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+      return;
+    }
+    try {
+      this.tokens = await api.listTokenBalances();
+      const drkAtomic = BigInt(Math.trunc(await api.walletBalance()));
+      const tokenId = this.tokenId.trim();
+      const token = tokenId
+        ? this.tokens.find((t) => t.tokenId === tokenId)
+        : undefined;
+      const check = evaluateSendBalance({
+        amountAtomic,
+        tokenId,
+        tokenLabel: token?.displayLabel,
+        tokenAtomic:
+          tokenId && token ? BigInt(Math.trunc(token.balanceAtomic)) : tokenId ? null : null,
+        drkAtomic,
+        feeAtomic: BigInt(Math.trunc(this.fee ?? 5_000_000)),
+      });
+      if (!check.ok) {
+        this.error = check.reason;
+        return;
+      }
+    } catch (e: any) {
+      this.error = formatInvokeError(e);
       return;
     }
     const parsedPreview = applyRecipientPaste(this.recipient);
@@ -277,8 +355,11 @@ export class SendFlow extends LitElement {
         memo: this.memo || undefined,
         tokenId: this.tokenId || undefined,
       });
+      this.emitChatReceipt("broadcasted", dest, this.result);
+      this.chatPayContext = null;
     } catch (e: any) {
       this.error = formatInvokeError(e);
+      this.emitChatReceipt("failed", dest);
     } finally {
       this.busy = false;
     }

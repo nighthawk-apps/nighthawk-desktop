@@ -40,6 +40,9 @@ export class MainApp extends LitElement {
       overflow-y: auto;
       min-height: 0;
     }
+    chat-screen[hidden] {
+      display: none;
+    }
     .center {
       display: flex;
       flex-direction: column;
@@ -159,16 +162,10 @@ export class MainApp extends LitElement {
     this.activeTab = "settings";
   }
 
-  private content() {
+  private otherContent() {
     switch (this.activeTab) {
       case "chat":
-        return html`<chat-screen
-          @open-chat-settings=${() => this.openSettings("Chat Settings")}
-          @open-transfer=${(e: CustomEvent<"request" | "receive" | "send">) => {
-            this.transferTab = e.detail;
-            this.activeTab = "transfer";
-          }}
-        ></chat-screen>`;
+        return null;
       case "transfer":
         return html`<transfer-flow .initialTab=${this.transferTab}></transfer-flow>`;
       case "dex":
@@ -230,7 +227,17 @@ export class MainApp extends LitElement {
         sync=${this.sync}
         mining=${this.mining}
       ></status-banner>
-      <main>${this.content()}</main>
+      <main>
+        <chat-screen
+          ?hidden=${this.activeTab !== "chat"}
+          @open-chat-settings=${() => this.openSettings("Chat Settings")}
+          @open-transfer=${(e: CustomEvent<"request" | "receive" | "send">) => {
+            this.transferTab = e.detail;
+            this.activeTab = "transfer";
+          }}
+        ></chat-screen>
+        ${this.otherContent()}
+      </main>
       <app-nav
         active=${this.activeTab === "transfer" ? "wallet" : this.activeTab}
         @tab-change=${(e: CustomEvent) => {

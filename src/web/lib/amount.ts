@@ -30,3 +30,42 @@ export function formatDrkAtomic(atomic: number | bigint): string {
 export function isValidDrkAmount(amount: string): boolean {
   return parseDrkAtomic(amount) !== null;
 }
+
+export type SendBalance =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/** Same rule as Android: an unknown token id is not DRK, and a custom token
+ *  still needs a separate DRK balance for the fee. */
+export function evaluateSendBalance(input: {
+  amountAtomic: bigint;
+  tokenId: string;
+  tokenLabel?: string | null;
+  tokenAtomic: bigint | null;
+  drkAtomic: bigint;
+  feeAtomic: bigint;
+}): SendBalance {
+  const tokenId = input.tokenId.trim();
+  const label = (input.tokenLabel ?? "").trim();
+  const native =
+    !tokenId ||
+    tokenId.toUpperCase() === "DRK" ||
+    label.toUpperCase() === "DRK";
+  if (native) {
+    const required = input.amountAtomic + input.feeAtomic;
+    if (input.drkAtomic < required) {
+      return { ok: false, reason: "Not enough DRK for the amount and fee" };
+    }
+    return { ok: true };
+  }
+  if (input.tokenAtomic === null) {
+    return { ok: false, reason: "That token is not in this wallet" };
+  }
+  if (input.tokenAtomic < input.amountAtomic) {
+    return { ok: false, reason: "Not enough of the selected token" };
+  }
+  if (input.drkAtomic < input.feeAtomic) {
+    return { ok: false, reason: "Not enough DRK to pay the fee" };
+  }
+  return { ok: true };
+}

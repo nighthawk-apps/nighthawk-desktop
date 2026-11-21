@@ -70,6 +70,12 @@ pub fn set_wallet_data_root(path: Option<PathBuf>) {
     *active_wallet_override().lock() = path;
 }
 
+#[cfg(test)]
+pub(crate) fn test_wallet_root_guard() -> parking_lot::MutexGuard<'static, ()> {
+    static TEST_ROOT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_ROOT_LOCK.get_or_init(|| Mutex::new(())).lock()
+}
+
 /// Per-wallet data root (vault, network DBs, address book).
 pub fn wallet_data_root() -> PathBuf {
     active_wallet_override()
