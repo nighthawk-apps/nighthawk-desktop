@@ -1,4 +1,4 @@
-import { parsePaymentUri, type PaymentUri } from "./payment-uri.ts";
+import { parsePaymentUri, utf8ByteLength, type PaymentUri } from "./payment-uri.ts";
 
 export interface ChatInvoice extends PaymentUri {
   raw: string;
@@ -15,7 +15,22 @@ export interface ChatReceipt {
   txId?: string;
 }
 
+export interface ChatPayContext {
+  raw: string;
+  channel: string;
+  dmMode: boolean;
+  peerPublic?: string;
+  receiptId: string;
+}
+
+export interface ChatReceiptDetail {
+  context: ChatPayContext | null;
+  receipt: ChatReceipt;
+  encoded: string;
+}
+
 const RECEIPT_PREFIX = "nh-receipt:v1";
+const MAX_CHAT_RECEIPT_BYTES = 512;
 
 export function findInvoice(text: string): ChatInvoice | null {
   for (const token of text.split(/\s+/)) {
@@ -76,3 +91,46 @@ export function isClearnetHttp(url: string): boolean {
 }
 
 export const CHAT_PAY_URI_KEY = "nighthawk.chatPayUri";
+export const CHAT_PAY_CONTEXT_KEY = "nighthawk.chatPayContext";
+export const CHAT_RECEIPT_EVENT = "nighthawk-chat-receipt";
+
+export function encodeReceiptForChat(
+  receipt: ChatReceipt,
+  maxBytes = MAX_CHAT_RECEIPT_BYTES,
+): string {
+  const full = encodeReceipt(receipt);
+  if (utf8ByteLength(full) <= maxBytes) return full;
+  return encodeReceipt({ ...receipt, memo: undefined });
+}
+
+export function stageChatPayContext(
+  context: ChatPayContext,
+  storage: Pick<Storage, "setItem"> = sessionStorage,
+): void {
+  storage.setItem(CHAT_PAY_URI_KEY, context.raw);
+  storage.setItem(CHAT_PAY_CONTEXT_KEY, JSON.stringify(context));
+}
+
+export function consumeChatPayContext(
+  storage: Pick<Storage, "getItem" | "removeItem"> = sessionStorage,
+): { raw: string; context: ChatPayContext | null } | null {
+  const rawUri = storage.getItem(CHAT_PAY_URI_KEY);
+  const rawContext = storage.getItem(CHAT_PAY_CONTEXT_KEY);
+  storage.removeItem(CHAT_PAY_URI_KEY);
+  storage.removeItem(CHAT_PAY_CONTEXT_KEY);
+
+  let context: ChatPayContext | null = null;
+  if (rawContext) {
+    try {
+      const parsed = JSON.parse(rawContext) as ChatPayContext;
+      if (parsed && typeof parsed.raw === "string" && typeof parsed.channel === "string") {
+        context = parsed;
+      }
+    } catch {
+      context = null;
+    }
+  }
+  const raw = rawUri ?? context?.raw ?? "";
+  if (!raw) return null;
+  return { raw, context };
+}

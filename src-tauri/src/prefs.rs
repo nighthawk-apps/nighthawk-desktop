@@ -21,6 +21,10 @@ pub struct Prefs {
     pub use_tor: bool,
     #[serde(alias = "tor_socks_port")]
     pub tor_socks_port: u16,
+    #[serde(default, alias = "use_nym")]
+    pub use_nym: bool,
+    #[serde(default = "default_nym_socks_port", alias = "nym_socks_port")]
+    pub nym_socks_port: u16,
     #[serde(alias = "mine_threads")]
     pub mine_threads: u32,
     #[serde(alias = "chat_nick")]
@@ -50,6 +54,10 @@ fn default_fee_tier() -> String {
     "normal".into()
 }
 
+fn default_nym_socks_port() -> u16 {
+    1080
+}
+
 fn default_wallet_id() -> String {
     "default".into()
 }
@@ -65,6 +73,8 @@ impl Default for Prefs {
             // Privacy-first: Tor on by default. Loopback LWD still connects directly.
             use_tor: true,
             tor_socks_port: 9150,
+            use_nym: false,
+            nym_socks_port: default_nym_socks_port(),
             mine_threads: 12,
             chat_nick: "nighthawk".to_string(),
             birthday_height: 0,

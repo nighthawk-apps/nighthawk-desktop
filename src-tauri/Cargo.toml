@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.1.12"
+version = "3.1.13"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2024"
@@ -37,13 +37,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 blake3 = "=1.8.3"
 argon2 = "0.5"
 url = "2"
+zeroize = "1.9"
 
 # Shared UniFFI crate (Android / iOS / desktop). UniFFI 0.32.2.
 # Cargo resolves this crate's `../../third_party/darkfi` paths from the
 # directory it opens, not from a symlink target. The checkout at
 # GitHub/darkfi-mobile-ffi is a symlink to this directory; depending on
-# the symlink would look for DarkFi outside the repo. iOS points its
-# rust/darkfi-mobile-ffi member at the same tree.
+# the symlink would look for DarkFi outside the repo. iOS builds
+# `nighthawk-android-wallet/rust/darkfi-mobile-ffi` directly via
+# `build-darkfi-mobile-ffi-ios.sh`; `nighthawk-ios-wallet/rust/Cargo.toml`
+# no longer lists `darkfi-mobile-ffi`.
 darkfi-mobile-ffi = { path = "../../nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
 async-stream = "0.3.6"
 

@@ -3,11 +3,9 @@ import { customElement, state } from "lit/decorators.js";
 import { api, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  clearDmUnread,
-  loadDmContacts,
-  removeDmContact,
-  saveDmContacts,
-  upsertDmContact,
+  bumpDmUnread,
+  clearLegacyDmStorage,
+  readLegacyDmContacts,
   type DmContact,
 } from "../lib/dm-contacts";
 import {
@@ -16,6 +14,7 @@ import {
   hasFud,
   isOwnNick,
   lexChat,
+  threadIsEncrypted,
   parseFud,
   peerNickIndex,
   queueFud,
@@ -25,20 +24,21 @@ import {
   DEFAULT_SELECTED_CHANNEL,
 } from "../lib/chat-defaults";
 import {
-  CHAT_PAY_URI_KEY,
+  CHAT_RECEIPT_EVENT,
   findInvoice,
   isClearnetHttp,
   parseReceipt,
+  stageChatPayContext,
+  type ChatReceiptDetail,
 } from "../lib/chat-wallet";
 import { buildPaymentUri } from "../lib/payment-uri";
 
 const CHANNELS: string[] = [...DEFAULT_PUBLIC_CHANNELS];
 
-/** Canonical channel key: leading `#`, lowercased (IRC channels are case-insensitive). */
+/** Canonical thread key: lowercased `#channel` for public rooms, exact-case nick for DMs. */
 function chanKey(channel: string): string {
   const t = channel.trim();
-  const withHash = t.startsWith("#") ? t : `#${t}`;
-  return withHash.toLowerCase();
+  return t.startsWith("#") ? t.toLowerCase() : t;
 }
 
 function sameChannel(a: string, b: string): boolean {
@@ -75,6 +75,12 @@ export class ChatScreen extends LitElement {
   private reconnectTimer?: number;
   private wasConnected = false;
   private reconnectAttempts = 0;
+  /** Messages held until DarkIRC reports connected, matching the mobile outbox. */
+  private outbox: Array<{ channel: string; wire: string }> = [];
+  private onChatReceipt = (e: Event) => {
+    const detail = (e as CustomEvent<ChatReceiptDetail>).detail;
+    if (detail) void this.postPaymentReceipt(detail);
+  };
 
   private static phaseLabel(phase: string): string {
     switch (phase) {
@@ -117,6 +123,41 @@ export class ChatScreen extends LitElement {
     }
   }
 
+  private chatReady(): boolean {
+    return this.status === "connected" || this.status === "running";
+  }
+
+  /** Send now, or keep the wire text until DarkIRC is connected. */
+  private async deliverChat(channel: string, wire: string) {
+    if (!this.chatReady()) {
+      this.outbox.push({ channel, wire });
+      this.error = "Queued until DarkIRC connects";
+      return;
+    }
+    await api.chatSend(channel, wire);
+  }
+
+  private flushingOutbox = false;
+
+  private async flushOutbox() {
+    if (this.flushingOutbox || !this.chatReady() || this.outbox.length === 0) return;
+    this.flushingOutbox = true;
+    try {
+      while (this.chatReady() && this.outbox.length > 0) {
+        const item = this.outbox[0];
+        try {
+          await api.chatSend(item.channel, item.wire);
+          this.outbox.shift();
+        } catch {
+          return;
+        }
+      }
+      if (this.error === "Queued until DarkIRC connects") this.error = "";
+    } finally {
+      this.flushingOutbox = false;
+    }
+  }
+
   private isTerminalPhase(phase: string): boolean {
     return (
       phase === "stopped" ||
@@ -143,6 +184,7 @@ export class ChatScreen extends LitElement {
         if (next === "connected" || next === "running") {
           this.wasConnected = true;
           this.reconnectAttempts = 0;
+          void this.flushOutbox();
         }
         // After a successful session, daemon death → schedule reconnect.
         // (Do not treat waiting_for_peers as fatal — that is normal DAG sync.)
@@ -195,6 +237,9 @@ export class ChatScreen extends LitElement {
       font-family: var(--font-family-base);
       font-size: var(--font-size-sm);
       line-height: 1.45;
+    }
+    :host([hidden]) {
+      display: none;
     }
     .top {
       display: flex;
@@ -479,12 +524,17 @@ export class ChatScreen extends LitElement {
     } catch {
       this.dmKeys = null;
     }
-    this.dmContacts = loadDmContacts();
     try {
-      localStorage.removeItem("nighthawk.dm.keypair");
+      const legacy = readLegacyDmContacts();
+      this.dmContacts =
+        legacy.length > 0
+          ? await api.dmContactsMigrate(legacy)
+          : await api.dmContactsList();
+      clearLegacyDmStorage();
     } catch {
-      /* ignore */
+      this.dmContacts = [];
     }
+    window.addEventListener(CHAT_RECEIPT_EVENT, this.onChatReceipt);
     this.unlisten = await api.onChatMessage(async (m) => {
       await this.ingestMessage(m);
     });
@@ -495,20 +545,9 @@ export class ChatScreen extends LitElement {
     if (this.seenEventIds.has(m.eventId)) return;
     this.seenEventIds.add(m.eventId);
 
-    let display = m;
-    if (this.dmMode && this.dmKeys && this.peerPublic) {
-      try {
-        const plain = await api.dmDecrypt({
-          theirPublicB58: this.peerPublic,
-          ciphertextB58: m.message,
-        });
-        display = { ...m, message: plain };
-        this.decryptedHint = "DM decrypted";
-      } catch {
-        /* leave ciphertext */
-      }
-    }
-
+    // The daemon already saltbox-decrypts nick DMs before this event.
+    // Decrypting again would show the inner ciphertext.
+    const display = m;
     const key = chanKey(m.channel);
     const prior = this.channelMessages[key] ?? [];
     this.channelMessages[key] = [...prior, display].slice(-500);
@@ -524,6 +563,14 @@ export class ChatScreen extends LitElement {
       if (!this.channelsList.some((c) => sameChannel(c, key))) {
         // Auto-add unknown channels that receive traffic (e.g. /msg targets).
         this.channelsList = [...this.channelsList, key];
+      }
+      const matchedContact = this.dmContacts.find(
+        (c) =>
+          c.label.trim().toLowerCase() === key.toLowerCase() ||
+          c.label.trim().toLowerCase() === m.nick.trim().toLowerCase(),
+      );
+      if (matchedContact && !m.isOutgoing) {
+        this.dmContacts = bumpDmUnread(this.dmContacts, matchedContact.publicB58);
       }
     }
   }
@@ -588,6 +635,7 @@ export class ChatScreen extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener(CHAT_RECEIPT_EVENT, this.onChatReceipt);
     this.unlisten?.();
     this.stopStatusPoll();
     if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
@@ -601,7 +649,8 @@ export class ChatScreen extends LitElement {
       (spanned?.kind === "fud" ? parseFud(spanned.value) : null) ?? parseFud(text);
     let privateTransport = false;
     try {
-      privateTransport = (await api.getPrefs()).useTor;
+      const prefs = await api.getPrefs();
+      privateTransport = Boolean(prefs.useTor || prefs.useNym);
     } catch {
       privateTransport = false;
     }
@@ -661,7 +710,13 @@ export class ChatScreen extends LitElement {
   }
 
   private payInvoice(raw: string) {
-    sessionStorage.setItem(CHAT_PAY_URI_KEY, raw);
+    stageChatPayContext({
+      raw,
+      channel: this.channel,
+      dmMode: this.dmMode,
+      peerPublic: this.dmMode && this.peerPublic.trim() ? this.peerPublic.trim() : undefined,
+      receiptId: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    });
     this.dispatchEvent(
       new CustomEvent("open-transfer", {
         detail: "send",
@@ -669,6 +724,37 @@ export class ChatScreen extends LitElement {
         composed: true,
       }),
     );
+  }
+
+  private async postPaymentReceipt(detail: ChatReceiptDetail) {
+    const targetChannel = detail.context?.channel?.trim() || this.channel;
+    const key = chanKey(targetChannel);
+    const nick = this.nick || (await api.getChatNick().catch(() => "")) || "me";
+    // Nick threads are saltbox-encrypted by the daemon. A second JS layer
+    // would hide the receipt from Android and iOS.
+    const wireBody = detail.encoded;
+
+    try {
+      const optimistic: ChatMessage = {
+        eventId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        channel: targetChannel,
+        nick,
+        message: detail.encoded,
+        timestamp: Date.now(),
+        isOutgoing: true,
+      };
+      const prior = this.channelMessages[key] ?? [];
+      this.channelMessages[key] = [...prior, optimistic].slice(-500);
+      if (sameChannel(targetChannel, this.channel)) {
+        this.messages = this.channelMessages[key];
+      }
+      await this.deliverChat(targetChannel, wireBody);
+    } catch (e: any) {
+      this.pushSystem(
+        `Payment receipt saved locally (chat relay unavailable: ${String(e)})`,
+        targetChannel,
+      );
+    }
   }
 
   private async postRequest() {
@@ -773,30 +859,49 @@ export class ChatScreen extends LitElement {
     }
   }
 
-  private saveContact() {
+  private async saveContact() {
     if (!this.peerPublic.trim()) {
       this.error = "Enter peer public key first";
       return;
     }
-    this.dmContacts = upsertDmContact(this.dmContacts, {
-      label: this.dmContactLabel,
-      publicB58: this.peerPublic.trim(),
-    });
-    saveDmContacts(this.dmContacts);
-    this.dmContactLabel = "";
-    this.showToast("DM contact saved");
+    try {
+      this.dmContacts = await api.dmContactsUpsert(
+        this.dmContactLabel,
+        this.peerPublic.trim(),
+      );
+      this.dmContactLabel = "";
+      this.error = "";
+      this.showToast("DM contact saved");
+    } catch (e: any) {
+      this.error = String(e);
+    }
   }
 
-  private selectContact(c: DmContact) {
+  private async selectContact(c: DmContact) {
     this.peerPublic = c.publicB58;
-    this.dmContacts = clearDmUnread(this.dmContacts, c.publicB58);
-    saveDmContacts(this.dmContacts);
     this.dmMode = true;
+    const label = c.label.trim();
+    if (label && !label.startsWith("#")) {
+      if (!this.channelsList.some((ch) => sameChannel(ch, label))) {
+        this.channelsList = [...this.channelsList, label];
+      }
+      this.switchChannel(label);
+    }
+    if (c.unread > 0) {
+      try {
+        this.dmContacts = await api.dmContactsClearUnread(c.publicB58);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
-  private deleteContact(id: string) {
-    this.dmContacts = removeDmContact(this.dmContacts, id);
-    saveDmContacts(this.dmContacts);
+  private async deleteContact(id: string) {
+    try {
+      this.dmContacts = await api.dmContactsRemove(id);
+    } catch (e: any) {
+      this.error = String(e);
+    }
   }
 
   private async stop() {
@@ -852,7 +957,8 @@ export class ChatScreen extends LitElement {
             this.pushSystem("Usage: /join <#channel>");
             return;
           }
-          const targetChan = chanKey(arg);
+          const normalized = arg.startsWith("#") ? arg : `#${arg}`;
+          const targetChan = chanKey(normalized);
           if (!this.channelsList.some((c) => sameChannel(c, targetChan))) {
             this.channelsList = [...this.channelsList, targetChan];
           }
@@ -890,7 +996,7 @@ export class ChatScreen extends LitElement {
             const nick = this.nick || (await api.getChatNick());
             const actionText = `* ${nick} ${arg}`;
             this.pushOptimistic(nick, actionText);
-            await api.chatSend(this.channel, actionText);
+            await this.deliverChat(this.channel, actionText);
           } catch (e: any) {
             this.error = String(e);
           }
@@ -905,7 +1011,7 @@ export class ChatScreen extends LitElement {
           const target = msgParts[0];
           const msgContent = arg.substring(target.length).trim();
           try {
-            await api.chatSend(target, msgContent);
+            await this.deliverChat(target, msgContent);
             this.pushSystem(`→ ${target}: ${msgContent}`);
           } catch (e: any) {
             this.error = String(e);
@@ -951,21 +1057,17 @@ export class ChatScreen extends LitElement {
     }
 
     try {
-      let body = text;
-      let displayBody = text;
-      if (this.dmMode) {
+      const body = text;
+      const displayBody = text;
+      if (threadIsEncrypted(this.dmMode, this.channel)) {
         if (!this.dmKeys || !this.peerPublic.trim()) {
           this.error = "Generate DM keys and set peer public key first";
           return;
         }
-        body = await api.dmEncrypt({
-          theirPublicB58: this.peerPublic.trim(),
-          plaintext: body,
-        });
       }
       const nick = this.nick || (await api.getChatNick()) || "me";
       this.pushOptimistic(nick, displayBody);
-      await api.chatSend(this.channel, body);
+      await this.deliverChat(this.channel, body);
     } catch (e: any) {
       this.error = String(e);
     }

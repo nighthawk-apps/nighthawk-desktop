@@ -1,4 +1,9 @@
-/** Local DM contact book (peer ChaCha public keys), persisted in localStorage. */
+/**
+ * DM contact helpers and legacy web-storage cleanup.
+ *
+ * Authoritative DM contacts & keypairs live in encrypted Rust storage
+ * (`dm_contacts.sealed` / `dm_keypair.sealed`) and in-memory FFI (`DM_CONTACTS`).
+ */
 
 export interface DmContact {
   id: string;
@@ -8,24 +13,58 @@ export interface DmContact {
   unread: number;
 }
 
-const KEY = "nighthawk.dm.contacts.v1";
+export const LEGACY_DM_CONTACTS_KEY = "nighthawk.dm.contacts.v1";
+export const LEGACY_DM_KEYPAIR_KEY = "nighthawk.dm.keypair";
 
-export function loadDmContacts(): DmContact[] {
+/** Read legacy plaintext `localStorage` DM contacts once for migration to Rust. */
+export function readLegacyDmContacts(
+  storage: Pick<Storage, "getItem"> = localStorage,
+): DmContact[] {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = storage.getItem(LEGACY_DM_CONTACTS_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as DmContact[];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is DmContact =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as DmContact).publicB58 === "string" &&
+        (item as DmContact).publicB58.trim().length > 0,
+    );
   } catch {
     return [];
   }
 }
 
-export function saveDmContacts(contacts: DmContact[]): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(contacts.slice(0, 200)));
-  } catch {
-    /* ignore quota */
+/** Scrub all legacy DM secrets/contacts from browser storage (`localStorage` / `sessionStorage`). */
+export function clearLegacyDmStorage(
+  localStore: Pick<Storage, "removeItem" | "length" | "key"> = localStorage,
+  sessionStore?: Pick<Storage, "removeItem" | "length" | "key">,
+): void {
+  const scrub = (store: Pick<Storage, "removeItem" | "length" | "key">) => {
+    try {
+      store.removeItem(LEGACY_DM_CONTACTS_KEY);
+      store.removeItem(LEGACY_DM_KEYPAIR_KEY);
+      const keysToDelete: string[] = [];
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i);
+        if (k && k.startsWith("nighthawk.dm.")) {
+          keysToDelete.push(k);
+        }
+      }
+      for (const k of keysToDelete) {
+        store.removeItem(k);
+      }
+    } catch {
+      /* ignore unavailable storage */
+    }
+  };
+  scrub(localStore);
+  if (sessionStore) {
+    scrub(sessionStore);
+  } else if (typeof sessionStorage !== "undefined") {
+    scrub(sessionStorage);
   }
 }
 

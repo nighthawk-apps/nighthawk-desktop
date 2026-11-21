@@ -151,15 +151,14 @@ pub fn list_entries() -> Result<Vec<AddressBookEntry>> {
     Ok(load()?.entries)
 }
 
-/// Newest first. The same address (case-insensitive) replaces the older row.
+/// Newest first. The same address (exact-case Base58) replaces the older row.
 pub fn apply_upsert(entries: &mut Vec<AddressBookEntry>, entry: AddressBookEntry) {
     let label = entry.label.trim();
     let address = entry.address.trim();
     if label.is_empty() || address.is_empty() {
         return;
     }
-    let key = address.to_lowercase();
-    entries.retain(|e| e.address.trim().to_lowercase() != key);
+    entries.retain(|e| e.address.trim() != address);
     entries.insert(
         0,
         AddressBookEntry {
@@ -200,14 +199,25 @@ mod tests {
     }
 
     #[test]
-    fn upsert_replaces_same_address_and_keeps_newest_first() {
+    fn upsert_preserves_case_distinct_base58_and_replaces_exact_match() {
         let mut rows = vec![entry("old", "Drk1abc")];
         apply_upsert(&mut rows, entry("Ada", "drk1abc"));
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].label, "Ada");
+        assert_eq!(rows[0].address, "drk1abc");
+        assert_eq!(rows[1].label, "old");
+        assert_eq!(rows[1].address, "Drk1abc");
+
+        apply_upsert(&mut rows, entry("AdaUpdated", "drk1abc"));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "AdaUpdated");
+        assert_eq!(rows[1].label, "old");
+
         apply_upsert(&mut rows, entry("Bea", "drk1other"));
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].label, "Bea");
-        assert_eq!(rows[1].label, "Ada");
+        assert_eq!(rows[1].label, "AdaUpdated");
+        assert_eq!(rows[2].label, "old");
     }
 
     #[test]
@@ -222,6 +232,7 @@ mod tests {
 
     #[test]
     fn encryption_roundtrip_and_no_plaintext_leak() {
+        let _guard = crate::paths::test_wallet_root_guard();
         let tmp_dir = std::env::temp_dir().join(format!("nh_test_{}", rand::random::<u64>()));
         let _ = fs::create_dir_all(&tmp_dir);
         crate::paths::set_wallet_data_root(Some(tmp_dir.clone()));
@@ -241,6 +252,7 @@ mod tests {
         assert!(!content_str.contains("drk1secretaddress123"));
         assert!(!content_str.contains("Alice"));
 
+        crate::paths::set_wallet_data_root(None);
         let _ = fs::remove_dir_all(&tmp_dir);
     }
 }
