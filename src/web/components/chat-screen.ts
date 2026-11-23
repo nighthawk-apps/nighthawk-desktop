@@ -4,6 +4,7 @@ import { api, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   bumpDmUnread,
+  clearDmUnread,
   clearLegacyDmStorage,
   readLegacyDmContacts,
   type DmContact,
@@ -549,7 +550,15 @@ export class ChatScreen extends LitElement {
     // Decrypting again would show the inner ciphertext.
     const display = m;
     const key = chanKey(m.channel);
-    const prior = this.channelMessages[key] ?? [];
+    let prior = this.channelMessages[key] ?? [];
+    if (m.isOutgoing || isOwnNick(m.nick, this.nick)) {
+      const optIdx = prior.findIndex(
+        (item) => item.eventId.startsWith("local-") && item.message === display.message,
+      );
+      if (optIdx !== -1) {
+        prior = [...prior.slice(0, optIdx), ...prior.slice(optIdx + 1)];
+      }
+    }
     this.channelMessages[key] = [...prior, display].slice(-500);
 
     if (sameChannel(m.channel, this.channel)) {
@@ -582,6 +591,9 @@ export class ChatScreen extends LitElement {
   private loadChannel(channel: string) {
     const key = chanKey(channel);
     this.channel = key;
+    if (key.startsWith("#")) {
+      this.dmMode = false;
+    }
     this.messages = [...(this.channelMessages[key] ?? [])];
     this.prevMessageCount = -1; // force scroll after switch
     // Clear unread for the channel we're switching to.
@@ -860,18 +872,23 @@ export class ChatScreen extends LitElement {
   }
 
   private async saveContact() {
-    if (!this.peerPublic.trim()) {
+    const peerPk = this.peerPublic.trim();
+    if (!peerPk) {
       this.error = "Enter peer public key first";
       return;
     }
     try {
       this.dmContacts = await api.dmContactsUpsert(
         this.dmContactLabel,
-        this.peerPublic.trim(),
+        peerPk,
       );
       this.dmContactLabel = "";
       this.error = "";
       this.showToast("DM contact saved");
+      const saved = this.dmContacts.find((c) => c.publicB58 === peerPk);
+      if (saved) {
+        await this.selectContact(saved);
+      }
     } catch (e: any) {
       this.error = String(e);
     }
@@ -888,8 +905,9 @@ export class ChatScreen extends LitElement {
       this.switchChannel(label);
     }
     if (c.unread > 0) {
+      this.dmContacts = clearDmUnread(this.dmContacts, c.publicB58);
       try {
-        this.dmContacts = await api.dmContactsClearUnread(c.publicB58);
+        await api.dmContactsClearUnread(c.publicB58);
       } catch {
         /* ignore */
       }
@@ -1059,6 +1077,10 @@ export class ChatScreen extends LitElement {
     try {
       const body = text;
       const displayBody = text;
+      if (this.dmMode && this.channel.trim().startsWith("#")) {
+        this.error = "Select or save a DM contact first — public #channels are not encrypted";
+        return;
+      }
       if (threadIsEncrypted(this.dmMode, this.channel)) {
         if (!this.dmKeys || !this.peerPublic.trim()) {
           this.error = "Generate DM keys and set peer public key first";
@@ -1140,7 +1162,7 @@ export class ChatScreen extends LitElement {
           title=${this.status}
         >
           ${ChatScreen.phaseLabel(this.status)}
-          · ${this.dmMode ? "Direct · E2E" : "Public channel"}
+          · ${threadIsEncrypted(this.dmMode, this.channel) ? "Direct · E2E" : "Public channel"}
         </span>
         <label>
           <input
@@ -1269,7 +1291,10 @@ export class ChatScreen extends LitElement {
               m.nick === "System" ? "nick" : own ? "nick own" : `nick h${peerNickIndex(m.nick)}`;
             return html`
               <div
-                class="m ${m.nick === "System" ? "system" : own ? "mine" : "peer"} ${this.dmMode
+                class="m ${m.nick === "System" ? "system" : own ? "mine" : "peer"} ${threadIsEncrypted(
+                  this.dmMode,
+                  this.channel,
+                )
                   ? "encrypted"
                   : ""}"
                 title="Click, long press, or right-click to copy"
@@ -1328,7 +1353,7 @@ export class ChatScreen extends LitElement {
         : null}
       <div class="composer">
         <input
-          placeholder=${this.dmMode
+          placeholder=${threadIsEncrypted(this.dmMode, this.channel)
             ? "Encrypted message…"
             : "Message or /command…"}
           .value=${this.draft}

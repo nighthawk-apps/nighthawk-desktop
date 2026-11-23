@@ -176,6 +176,9 @@ pub fn upsert_contact(
     }
     let clean_label = {
         let t = label.trim();
+        if t.starts_with('#') {
+            return Err(anyhow!("DM contact label cannot start with '#'"));
+        }
         if t.is_empty() {
             pk.chars().take(12).collect()
         } else {

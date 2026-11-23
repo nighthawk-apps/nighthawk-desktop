@@ -182,6 +182,10 @@ export class MainApp extends LitElement {
           @prefs-changed=${async () => {
             const p = await api.getPrefs();
             this.network = p.network;
+            const st = await api.appStatus().catch(() => null);
+            if (st && !st.walletOpen && (await api.walletExists().catch(() => false))) {
+              await api.openWallet().catch(() => undefined);
+            }
           }}
         ></settings-screen>`;
       default:

@@ -357,20 +357,25 @@ pub async fn set_prefs(
 
     if transport_changed {
         let app_clone = app.clone();
+        let prefs_for_transport = prefs.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let was_darkirc_active = darkirc_is_active();
             if was_darkirc_active {
                 let _ = stop_darkirc();
                 wait_for_darkirc_idle(Duration::from_secs(5));
             }
-            apply_transport_for_prefs(Some(&old), &prefs)?;
+            apply_transport_for_prefs(Some(&old), &prefs_for_transport)?;
             if was_darkirc_active {
-                restart_darkirc_for_prefs(&app_clone, &prefs)?;
+                sync_dm_contacts_if_unlocked();
+                restart_darkirc_for_prefs(&app_clone, &prefs_for_transport)?;
             }
             Ok::<_, String>(())
         })
         .await
         .map_err(|e| format!("Transport reconfigure interrupted: {e}"))??;
+    }
+    if needs_wallet_reopen && secure_store::wallet_exists() {
+        let _ = open_existing_wallet(&app, state.inner()).await;
     }
     Ok(())
 }
@@ -1060,6 +1065,17 @@ pub fn dm_contacts_upsert(
     public_b58: String,
 ) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
     let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    if crate::dm_store::load(&wallet_pass)
+        .map_err(map_err)?
+        .is_none()
+    {
+        let k = generate_dm_keypair();
+        let stored = crate::dm_store::DmKeypairStored {
+            secret_b58: k.secret_b58,
+            public_b58: k.public_b58,
+        };
+        crate::dm_store::save(&wallet_pass, &stored).map_err(map_err)?;
+    }
     let contacts =
         crate::dm_store::upsert_contact(&wallet_pass, &label, &public_b58).map_err(map_err)?;
     sync_dm_contacts_to_ffi(&wallet_pass)?;
@@ -1652,12 +1668,16 @@ pub async fn set_network(
     *state.prefs.lock() = prefs.clone();
     *state.network.lock() = network;
     close_wallet_and_clear_session(&state);
+    if secure_store::wallet_exists() {
+        let _ = open_existing_wallet(&app, state.inner()).await;
+    }
     if network_changed {
         let app_clone = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
             if darkirc_is_active() {
                 let _ = stop_darkirc();
                 wait_for_darkirc_idle(Duration::from_secs(5));
+                sync_dm_contacts_if_unlocked();
                 restart_darkirc_for_prefs(&app_clone, &prefs)?;
             }
             Ok::<_, String>(())

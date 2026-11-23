@@ -489,7 +489,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop ${this.appVersion || "3.1.12"} — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop ${this.appVersion || "3.1.14"} — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}
