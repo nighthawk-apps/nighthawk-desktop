@@ -34,7 +34,7 @@
   "wallet.amount_hint": "Amount (DRK or atomic token)",
   "wallet.birthday": "Birthday height (optional)",
   "wallet.could_not_open": "Could not open the existing wallet.",
-  "wallet.estimate_fee": "Estimate fee",
+  "wallet.estimate_fee": "Check scheduled fee",
   "network.mainnet": "Mainnet",
   "network.testnet": "Testnet",
   "network.label": "Network",

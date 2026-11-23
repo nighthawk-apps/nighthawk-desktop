@@ -682,7 +682,8 @@ pub async fn estimate_fee(
     memo: Option<String>,
     token_id: Option<String>,
 ) -> Result<i64, String> {
-    // Fee tiers are not applied on build/broadcast yet — return the fee send uses.
+    // Validates inputs and returns the fixed SCHEDULE_TRANSFER_FEE_ATOMIC
+    // schedule constant (5_000_000 atomic), not a darkfid gas measurement.
     with_wallet_blocking(&state, |w| {
         reject_until_spend_ready(&w)?;
         w.estimate_transfer_fee(recipient, amount, token_id, memo)

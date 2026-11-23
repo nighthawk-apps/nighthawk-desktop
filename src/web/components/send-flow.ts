@@ -458,7 +458,7 @@ export class SendFlow extends LitElement {
       ></textarea>
       ${this.fee !== null
         ? html`<p class="msg">
-            Estimated fee: ${formatDrkAtomic(this.fee)} DRK
+            Scheduled fee (fixed): ${formatDrkAtomic(this.fee)} DRK
           </p>`
         : null}
       ${spendReady(this.sync)
@@ -472,7 +472,7 @@ export class SendFlow extends LitElement {
           ?disabled=${this.busy || !spendReady(this.sync)}
           @click=${this.estimate}
         >
-          Estimate fee
+          Check scheduled fee
         </button>
         <button
           ?disabled=${this.busy || !spendReady(this.sync)}
