@@ -36,7 +36,7 @@ impl Network {
     pub fn default_lwd_tls_pin(self) -> Option<&'static str> {
         match self {
             Network::Testnet => {
-                Some("c02faee24a8cf271aa91c28b942949ba10ec4413c6d427a598b15a5467978824")
+                Some("d8163009e3bb0bac39adbbfeb227827a91a590b96ec33f72576278c492be628e")
             }
             Network::Mainnet => None,
         }
@@ -54,10 +54,72 @@ impl std::str::FromStr for Network {
     }
 }
 
+#[cfg(test)]
+fn app_root_override() -> &'static Mutex<Option<PathBuf>> {
+    static O: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    O.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_app_root_override(path: Option<PathBuf>) {
+    *app_root_override().lock() = path;
+}
+
 pub fn app_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(p) = app_root_override().lock().clone() {
+        return p;
+    }
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("nighthawk-app-desktop")
+}
+
+/// Atomically write `bytes` to `path` via a sibling temporary file and rename.
+/// On Unix, when `mode_0600` is true, creates the temp file with mode `0o600`
+/// before writing so sensitive files are never world-readable.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8], mode_0600: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(not(unix))]
+    let _ = mode_0600;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let tmp_name = format!(
+        ".{file_name}.tmp.{}.{:08x}",
+        std::process::id(),
+        rand::random::<u32>()
+    );
+    let tmp_path = path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(tmp_name);
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    if mode_0600 {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&tmp_path)?;
+    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    drop(file);
+    #[cfg(unix)]
+    if mode_0600 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Active wallet profile root. `None` = legacy single-wallet layout at [`app_root`].

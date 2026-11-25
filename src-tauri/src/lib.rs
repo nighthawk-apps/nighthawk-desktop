@@ -26,7 +26,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
@@ -48,13 +47,23 @@ pub fn run() {
             commands::estimate_fee,
             commands::send_drk,
             commands::list_token_balances,
+            commands::token_generate,
+            commands::token_mint,
+            commands::token_freeze,
+            commands::list_mint_authorities,
             commands::transaction_payment_memo,
             commands::transaction_recipient,
             commands::list_daos,
             commands::list_proposals,
             commands::get_proposal,
+            commands::dao_create,
+            commands::dao_import,
+            commands::dao_export_role,
+            commands::dao_fund,
+            commands::dao_treasury,
             commands::dao_propose_transfer,
             commands::dao_vote,
+            commands::dao_exec_proposal,
             commands::handle_reorg_recovery,
             commands::arti_start,
             commands::arti_stop,
@@ -69,6 +78,7 @@ pub fn run() {
             commands::dm_contacts_upsert,
             commands::dm_contacts_remove,
             commands::dm_contacts_clear_unread,
+            commands::dm_contacts_bump_unread,
             commands::dm_contacts_migrate,
             commands::dm_encrypt,
             commands::dm_decrypt,

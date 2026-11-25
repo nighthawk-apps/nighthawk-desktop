@@ -9,15 +9,24 @@ triple="${1:-$(rustc -vV | sed -n 's/^host: //p')}"
 # Tauri externalBin looks for binaries/xmrig-<triple>
 dest="$BIN/xmrig-$triple"
 
+copy_if_distinct() {
+  local src="$1"
+  local dst="$2"
+  local src_real dst_real
+  src_real="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+  dst_real="$(cd "$(dirname "$dst")" && pwd)/$(basename "$dst")"
+  if [[ "$src_real" != "$dst_real" ]]; then
+    cp -f "$src" "$dst"
+  fi
+  chmod +x "$dst"
+}
+
 if [[ -x /opt/homebrew/bin/xmrig ]]; then
-  cp -f /opt/homebrew/bin/xmrig "$dest"
-  chmod +x "$dest"
-  # Also keep un-suffixed name used in some resource lookups
-  cp -f "$dest" "$BIN/xmrig-$triple"
+  copy_if_distinct /opt/homebrew/bin/xmrig "$dest"
   echo "Copied Homebrew xmrig -> $dest"
 elif command -v xmrig >/dev/null; then
-  cp -f "$(command -v xmrig)" "$dest"
-  chmod +x "$dest"
+  src="$(command -v xmrig)"
+  copy_if_distinct "$src" "$dest"
   echo "Copied PATH xmrig -> $dest"
 else
   echo "Install xmrig (brew install xmrig) or place binary at $dest" >&2

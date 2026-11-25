@@ -112,6 +112,12 @@ export interface TokenBalance {
   balanceAtomic: number;
 }
 
+export interface MintAuthority {
+  tokenId: string;
+  alias: string | null;
+  frozen: boolean;
+}
+
 export interface MineStatus {
   running: boolean;
   threads: number;
@@ -236,6 +242,17 @@ export const api = {
   walletLightSync: () => invokeCmd<LightSyncState>("wallet_light_sync"),
   walletListTxs: () => invokeCmd<TxRecord[]>("wallet_list_txs"),
   listTokenBalances: () => invokeCmd<TokenBalance[]>("list_token_balances"),
+  tokenGenerate: (alias?: string) =>
+    invokeCmd<string>("token_generate", { alias: alias?.trim() || null }),
+  tokenMint: (args: {
+    tokenId: string;
+    amount: string;
+    recipientAddress: string;
+  }) => invokeCmd<string>("token_mint", { ...args }),
+  tokenFreeze: (tokenId: string) =>
+    invokeCmd<string>("token_freeze", { tokenId }),
+  listMintAuthorities: () =>
+    invokeCmd<MintAuthority[]>("list_mint_authorities"),
   transactionPaymentMemo: (txHash: string) =>
     invokeCmd<string | null>("transaction_payment_memo", { txHash }),
   transactionRecipient: (txHash: string) =>
@@ -261,6 +278,22 @@ export const api = {
     }),
   getProposal: (proposalBullaB58: string) =>
     invokeCmd("get_proposal", { proposalBullaB58 }),
+  daoCreate: (args: {
+    name: string;
+    proposerLimit: string;
+    quorum: string;
+    earlyExecQuorum: string;
+    approvalRatio: number;
+    govTokenId: string;
+  }) => invokeCmd<string>("dao_create", { ...args }),
+  daoImport: (name: string, toml: string) =>
+    invokeCmd<string>("dao_import", { name, toml }),
+  daoExportRole: (daoName: string, role: string) =>
+    invokeCmd<string>("dao_export_role", { daoName, role }),
+  daoFund: (args: { daoName: string; amount: string; tokenId?: string }) =>
+    invokeCmd<string>("dao_fund", { ...args }),
+  daoTreasury: (daoName: string) =>
+    invokeCmd<string>("dao_treasury", { daoName }),
   daoProposeTransfer: (args: {
     daoName: string;
     durationBlockwindows: number;
@@ -270,6 +303,8 @@ export const api = {
   }) => invokeCmd<string>("dao_propose_transfer", { ...args }),
   daoVote: (proposalBullaB58: string, voteYes: boolean) =>
     invokeCmd<string>("dao_vote", { proposalBullaB58, voteYes }),
+  daoExecProposal: (proposalBullaB58: string) =>
+    invokeCmd<string>("dao_exec_proposal", { proposalBullaB58 }),
   handleReorgRecovery: (rewindToHeight: number) =>
     invokeCmd<ReorgEvent>("handle_reorg_recovery", { rewindToHeight }),
   onReorg: (cb: (e: ReorgEvent) => void): Promise<UnlistenFn> =>
@@ -294,6 +329,8 @@ export const api = {
     invokeCmd<DmContactRecord[]>("dm_contacts_remove", { id }),
   dmContactsClearUnread: (publicB58: string) =>
     invokeCmd<DmContactRecord[]>("dm_contacts_clear_unread", { publicB58 }),
+  dmContactsBumpUnread: (publicB58: string) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_bump_unread", { publicB58 }),
   dmContactsMigrate: (legacy: DmContactRecord[]) =>
     invokeCmd<DmContactRecord[]>("dm_contacts_migrate", { legacy }),
   dmEncrypt: (args: { theirPublicB58: string; plaintext: string }) =>

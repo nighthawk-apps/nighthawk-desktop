@@ -364,18 +364,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "argon2"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
-dependencies = [
- "base64ct",
- "blake2 0.10.6",
- "cpufeatures 0.2.17",
- "password-hash",
-]
-
-[[package]]
 name = "aristo"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3014,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "darkfi-mobile-ffi"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "android_log-sys",
  "android_logger",
@@ -7648,12 +7636,10 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nighthawk-app-desktop"
-version = "3.1.19"
+version = "3.1.20"
 dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
- "argon2",
- "async-stream",
  "base64 0.22.1",
  "blake3",
  "bs58",
@@ -7671,8 +7657,6 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
- "tauri-plugin-shell",
- "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -9756,16 +9740,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "os_pipe"
-version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "os_str_bytes"
 version = "6.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9925,17 +9899,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link 0.2.1",
-]
-
-[[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -12429,16 +12392,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shared_child"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "607549934f6cc26b89cfecfdc46fa90f1e5d1536a68349b0c3a4f9d1c0d37959"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "shellexpand"
 version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13447,8 +13400,6 @@ dependencies = [
 [[package]]
 name = "sysinfo"
 version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ab6a2f8bfe508deb3c6406578252e491d299cbbf3bc0529ecc3313aee4a52f"
 dependencies = [
  "libc",
  "memchr",
@@ -13881,29 +13832,6 @@ dependencies = [
  "url",
  "windows",
  "zbus",
-]
-
-[[package]]
-name = "tauri-plugin-shell"
-version = "2.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7375b25f72f70f6168f27f1ba3a413e30eaa0a2098cff53a4046ebfe9e2f142d"
-dependencies = [
- "encoding_rs",
- "libc",
- "log",
- "open",
- "os_pipe",
- "regex",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "shared_child",
- "tauri",
- "tauri-plugin",
- "thiserror 2.0.21",
- "tokio",
- "windows-sys 0.60.2",
 ]
 
 [[package]]

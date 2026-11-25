@@ -98,17 +98,10 @@ fn open_seal(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn save(wallet_pass: &str, keys: &DmKeypairStored) -> Result<()> {
-    let root = crate::paths::wallet_data_root();
-    fs::create_dir_all(&root).context("create wallet data root")?;
     let plain = serde_json::to_vec(keys)?;
     let key = derive_key(wallet_pass);
     let sealed = seal(&key, &plain)?;
-    fs::write(path(), sealed).context("write dm_keypair.sealed")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path(), fs::Permissions::from_mode(0o600));
-    }
+    crate::paths::write_atomic(&path(), &sealed, true).context("write dm_keypair.sealed")?;
     Ok(())
 }
 
@@ -125,21 +118,12 @@ pub fn load(wallet_pass: &str) -> Result<Option<DmKeypairStored>> {
 }
 
 pub fn save_contacts(wallet_pass: &str, contacts: &[DmContactStored]) -> Result<()> {
-    let root = crate::paths::wallet_data_root();
-    fs::create_dir_all(&root).context("create wallet data root")?;
     let capped: Vec<&DmContactStored> = contacts.iter().take(MAX_DM_CONTACTS).collect();
     let plain = serde_json::to_vec(&capped)?;
     let key = derive_contacts_key(wallet_pass);
     let sealed = seal(&key, &plain)?;
-    let dest = contacts_path();
-    let tmp = dest.with_extension("sealed.tmp");
-    fs::write(&tmp, sealed).context("write dm_contacts.sealed.tmp")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
-    }
-    fs::rename(&tmp, &dest).context("atomic rename dm_contacts.sealed")?;
+    crate::paths::write_atomic(&contacts_path(), &sealed, true)
+        .context("write dm_contacts.sealed")?;
     Ok(())
 }
 
@@ -234,6 +218,24 @@ pub fn clear_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContact
     Ok(contacts)
 }
 
+pub fn bump_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContactStored>> {
+    let mut contacts = load_contacts(wallet_pass)?;
+    let pk = public_b58.trim();
+    let mut changed = false;
+    let now = now_millis();
+    for c in &mut contacts {
+        if c.public_b58 == pk {
+            c.unread = c.unread.saturating_add(1);
+            c.last_seen_at = now;
+            changed = true;
+        }
+    }
+    if changed {
+        save_contacts(wallet_pass, &contacts)?;
+    }
+    Ok(contacts)
+}
+
 pub fn migrate_legacy_contacts(
     wallet_pass: &str,
     legacy: Vec<DmContactStored>,
@@ -310,6 +312,17 @@ mod tests {
 
         let loaded = load_contacts(pass).unwrap();
         assert_eq!(loaded, list);
+
+        let bumped = bump_unread(pass, &pk1).unwrap();
+        assert_eq!(
+            bumped.iter().find(|c| c.public_b58 == pk1).unwrap().unread,
+            1
+        );
+        let cleared = clear_unread(pass, &pk1).unwrap();
+        assert_eq!(
+            cleared.iter().find(|c| c.public_b58 == pk1).unwrap().unread,
+            0
+        );
 
         let raw = fs::read(contacts_path()).unwrap();
         let raw_lossy = String::from_utf8_lossy(&raw);

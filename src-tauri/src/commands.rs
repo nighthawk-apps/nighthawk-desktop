@@ -236,6 +236,13 @@ fn wait_for_darkirc_idle(timeout: Duration) {
     }
 }
 
+fn stop_darkirc_if_active() {
+    if darkirc_is_active() {
+        let _ = stop_darkirc();
+        wait_for_darkirc_idle(Duration::from_secs(5));
+    }
+}
+
 fn apply_transport_for_prefs(old: Option<&Prefs>, prefs: &Prefs) -> Result<(), String> {
     ensure_dirs(prefs.network).map_err(map_err)?;
     set_network_storage_dir(cache_path(prefs.network).to_string_lossy().to_string());
@@ -323,7 +330,7 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
 pub async fn set_prefs(
     app: AppHandle,
     state: State<'_, AppState>,
-    prefs: Prefs,
+    mut prefs: Prefs,
 ) -> Result<(), String> {
     if !prefs.lightwallet_url.trim().is_empty() {
         validate_lwd_url(&prefs.lightwallet_url)?;
@@ -331,12 +338,19 @@ pub async fn set_prefs(
     if !prefs.stratum_url.trim().is_empty() {
         validate_host_port(&prefs.stratum_url, "stratum")?;
     }
-    if let Some(rpc) = &prefs.darkfid_rpc_url {
-        if !rpc.trim().is_empty() {
-            validate_host_port(rpc, "darkfid RPC")?;
-        }
+    if let Some(rpc) = &prefs.darkfid_rpc_url
+        && !rpc.trim().is_empty()
+    {
+        validate_host_port(rpc, "darkfid RPC")?;
     }
+    prefs.chat_nick = sanitize_nickname(prefs.chat_nick.trim())?;
     let old = state.prefs.lock().clone();
+    if !wallets::is_valid_wallet_id(&prefs.active_wallet_id) {
+        return Err("Invalid active wallet profile id".into());
+    }
+    if prefs.active_wallet_id != old.active_wallet_id {
+        return Err("Use the wallet profile switcher to change the active wallet".into());
+    }
     let transport_changed = old.use_tor != prefs.use_tor
         || old.tor_socks_port != prefs.tor_socks_port
         || old.use_nym != prefs.use_nym
@@ -375,7 +389,9 @@ pub async fn set_prefs(
         .map_err(|e| format!("Transport reconfigure interrupted: {e}"))??;
     }
     if needs_wallet_reopen && secure_store::wallet_exists() {
-        let _ = open_existing_wallet(&app, state.inner()).await;
+        open_existing_wallet(&app, state.inner())
+            .await
+            .map_err(|e| format!("Preferences saved, but failed to reopen wallet: {e}"))?;
     }
     Ok(())
 }
@@ -737,6 +753,64 @@ pub async fn list_token_balances(
     .await
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MintAuthorityDto {
+    pub token_id: String,
+    pub alias: Option<String>,
+    pub frozen: bool,
+}
+
+#[tauri::command]
+pub async fn token_generate(
+    state: State<'_, AppState>,
+    alias: Option<String>,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| w.token_generate(alias).map_err(ffi_err)).await
+}
+
+#[tauri::command]
+pub async fn token_mint(
+    state: State<'_, AppState>,
+    token_id: String,
+    amount: String,
+    recipient_address: String,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
+        w.token_mint(token_id, amount, recipient_address)
+            .map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn token_freeze(state: State<'_, AppState>, token_id: String) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
+        w.token_freeze(token_id).map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_mint_authorities(
+    state: State<'_, AppState>,
+) -> Result<Vec<MintAuthorityDto>, String> {
+    with_wallet_blocking(&state, |w| {
+        let list = w.list_mint_authorities().map_err(ffi_err)?;
+        Ok(list
+            .into_iter()
+            .map(|a| MintAuthorityDto {
+                token_id: a.token_id,
+                alias: a.alias,
+                frozen: a.frozen,
+            })
+            .collect())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn transaction_payment_memo(
     state: State<'_, AppState>,
@@ -883,6 +957,71 @@ pub async fn get_proposal(
 }
 
 #[tauri::command]
+pub async fn dao_create(
+    state: State<'_, AppState>,
+    name: String,
+    proposer_limit: String,
+    quorum: String,
+    early_exec_quorum: String,
+    approval_ratio: f64,
+    gov_token_id: String,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
+        w.dao_create(
+            name,
+            proposer_limit,
+            quorum,
+            early_exec_quorum,
+            approval_ratio,
+            gov_token_id,
+        )
+        .map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dao_import(
+    state: State<'_, AppState>,
+    name: String,
+    toml: String,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| w.dao_import(name, toml).map_err(ffi_err)).await
+}
+
+#[tauri::command]
+pub async fn dao_export_role(
+    state: State<'_, AppState>,
+    dao_name: String,
+    role: String,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        w.dao_export_role(dao_name, role).map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dao_fund(
+    state: State<'_, AppState>,
+    dao_name: String,
+    amount: String,
+    token_id: Option<String>,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
+        w.dao_fund(dao_name, amount, token_id).map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dao_treasury(state: State<'_, AppState>, dao_name: String) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| w.dao_treasury(dao_name).map_err(ffi_err)).await
+}
+
+#[tauri::command]
 pub async fn dao_propose_transfer(
     state: State<'_, AppState>,
     dao_name: String,
@@ -892,6 +1031,7 @@ pub async fn dao_propose_transfer(
     recipient_address: String,
 ) -> Result<String, String> {
     with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
         w.dao_propose_transfer(
             dao_name,
             duration_blockwindows,
@@ -911,7 +1051,20 @@ pub async fn dao_vote(
     vote_yes: bool,
 ) -> Result<String, String> {
     with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
         w.dao_vote(proposal_bulla_b58, vote_yes).map_err(ffi_err)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dao_exec_proposal(
+    state: State<'_, AppState>,
+    proposal_bulla_b58: String,
+) -> Result<String, String> {
+    with_wallet_blocking(&state, move |w| {
+        reject_until_spend_ready(&w)?;
+        w.dao_exec(proposal_bulla_b58).map_err(ffi_err)
     })
     .await
 }
@@ -1104,6 +1257,14 @@ pub fn dm_contacts_clear_unread(
 }
 
 #[tauri::command]
+pub fn dm_contacts_bump_unread(
+    public_b58: String,
+) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
+    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+    crate::dm_store::bump_unread(&wallet_pass, &public_b58).map_err(map_err)
+}
+
+#[tauri::command]
 pub fn dm_contacts_migrate(
     legacy: Vec<crate::dm_store::DmContactStored>,
 ) -> Result<Vec<crate::dm_store::DmContactStored>, String> {
@@ -1164,7 +1325,7 @@ pub fn wallets_list() -> Result<WalletProfilesDto, String> {
 }
 
 #[tauri::command]
-pub fn wallets_create(
+pub async fn wallets_create(
     state: State<'_, AppState>,
     label: String,
 ) -> Result<wallets::WalletProfile, String> {
@@ -1175,6 +1336,9 @@ pub fn wallets_create(
             let _ = m.child.wait();
         }
     }
+    tauri::async_runtime::spawn_blocking(stop_darkirc_if_active)
+        .await
+        .map_err(|e| format!("Chat stop interrupted: {e}"))?;
     close_wallet_and_clear_session(&state);
     let profile = wallets::create_profile(label).map_err(map_err)?;
     let mut prefs = state.prefs.lock().clone();
@@ -1184,7 +1348,7 @@ pub fn wallets_create(
 }
 
 #[tauri::command]
-pub fn wallets_switch(state: State<'_, AppState>, wallet_id: String) -> Result<(), String> {
+pub async fn wallets_switch(state: State<'_, AppState>, wallet_id: String) -> Result<(), String> {
     {
         let mut miner = state.miner.lock();
         if let Some(mut m) = miner.take() {
@@ -1192,6 +1356,9 @@ pub fn wallets_switch(state: State<'_, AppState>, wallet_id: String) -> Result<(
             let _ = m.child.wait();
         }
     }
+    tauri::async_runtime::spawn_blocking(stop_darkirc_if_active)
+        .await
+        .map_err(|e| format!("Chat stop interrupted: {e}"))?;
     close_wallet_and_clear_session(&state);
     wallets::switch_profile(&wallet_id).map_err(map_err)?;
     let mut prefs = state.prefs.lock().clone();
@@ -1370,10 +1537,10 @@ fn read_log_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut buf = String::new();
     file.read_to_string(&mut buf).ok()?;
-    if start > 0 {
-        if let Some(idx) = buf.find('\n') {
-            buf.drain(..=idx);
-        }
+    if start > 0
+        && let Some(idx) = buf.find('\n')
+    {
+        buf.drain(..=idx);
     }
     Some(buf)
 }
@@ -1404,15 +1571,117 @@ fn parse_hashrate(log: &str) -> Option<f64> {
     None
 }
 
+fn xmrig_sidecar_filename() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "xmrig.exe"
+    } else {
+        "xmrig"
+    }
+}
+
+fn current_target_triple() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "aarch64-apple-darwin"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "x86_64-apple-darwin"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "x86_64-unknown-linux-gnu"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "aarch64-unknown-linux-gnu"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "x86_64-pc-windows-msvc"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        "aarch64-pc-windows-msvc"
+    }
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
+    )))]
+    {
+        "unknown"
+    }
+}
+
+fn xmrig_triple_filename() -> String {
+    let ext = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    format!("xmrig-{}{ext}", current_target_triple())
+}
+
+/// Resolve the bundled xmrig sidecar path.
+///
+/// Tauri 2 places `externalBin` sidecars adjacent to `std::env::current_exe()`
+/// (`xmrig` on Linux/macOS, `xmrig.exe` on Windows). Checks that location first,
+/// then falls back to `BaseDirectory::Resource` and the dev `binaries/` directory.
+fn resolve_xmrig_candidate(
+    current_exe: Option<&std::path::Path>,
+    resource_path: Option<&std::path::Path>,
+    dev_binaries_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    if let Some(exe) = current_exe
+        && let Some(dir) = exe.parent()
+    {
+        let adjacent = dir.join(xmrig_sidecar_filename());
+        if adjacent.is_file() {
+            return Some(adjacent);
+        }
+        let adjacent_triple = dir.join(xmrig_triple_filename());
+        if adjacent_triple.is_file() {
+            return Some(adjacent_triple);
+        }
+    }
+    if let Some(res) = resource_path
+        && res.is_file()
+    {
+        return Some(res.to_path_buf());
+    }
+    if let Some(bin_dir) = dev_binaries_dir {
+        let dev_triple = bin_dir.join(xmrig_triple_filename());
+        if dev_triple.is_file() {
+            return Some(dev_triple);
+        }
+        let dev_plain = bin_dir.join(xmrig_sidecar_filename());
+        if dev_plain.is_file() {
+            return Some(dev_plain);
+        }
+    }
+    None
+}
+
 fn xmrig_bin(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
-    let p = app
+    let current_exe = std::env::current_exe().ok();
+    let res_rel = format!("binaries/{}", xmrig_sidecar_filename());
+    let resource_path = app
         .path()
-        .resolve("binaries/xmrig", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| format!("xmrig resource: {e}"))?;
-    if !p.exists() {
-        return Err("bundled xmrig is missing from the app resources".into());
-    }
+        .resolve(&res_rel, tauri::path::BaseDirectory::Resource)
+        .ok();
+    let dev_binaries =
+        cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+    let p = resolve_xmrig_candidate(
+        current_exe.as_deref(),
+        resource_path.as_deref(),
+        dev_binaries.as_deref(),
+    )
+    .ok_or_else(|| "bundled xmrig sidecar is missing from the app bundle".to_string())?;
     verify_xmrig_hash(&p)?;
     Ok(p)
 }
@@ -1423,6 +1692,7 @@ fn verify_xmrig_hash(path: &std::path::Path) -> Result<(), String> {
     const ALLOWED: &[&str] = &[
         "f3ec92e5937bc2510e074e28fb1811215f76229fa08067adc5b2e2848fa8e845",
         "3bf7a353daa4af0f4d2aa4c5a0294fd14d3a330b0abf2e2e4dd23e14650aa527",
+        "2378ed17a514a54d06b000f82ea1372d046d79d5cfbdb7ac5ac9a99c22ee2d0b",
         "6fa80698d7268f6e88aa88c06fb27ee99e1bcee747c2e76911e6206a5b1aeeb3",
         "b20f39fc00d242e706b6c30367ad811c676e0575050a4ec2f30104b696944b49",
     ];
@@ -1501,14 +1771,43 @@ fn validate_host_port(raw: &str, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn miner_socks5_proxy(prefs: &Prefs, stratum_loopback: bool) -> Option<String> {
+    if stratum_loopback || transport_manager::session_direct() {
+        return None;
+    }
+    match transport_kind_for_prefs(prefs) {
+        TransportKind::Nym => {
+            let port = if prefs.nym_socks_port == 0 {
+                1080
+            } else {
+                prefs.nym_socks_port
+            };
+            Some(format!("127.0.0.1:{port}"))
+        }
+        TransportKind::Tor => {
+            let port = if prefs.tor_socks_port == 0 {
+                9050
+            } else {
+                prefs.tor_socks_port
+            };
+            Some(format!("127.0.0.1:{port}"))
+        }
+        TransportKind::Direct => None,
+    }
+}
+
 #[tauri::command]
-pub fn mine_status(state: State<'_, AppState>) -> Result<MineStatusDto, String> {
+pub async fn mine_status(state: State<'_, AppState>) -> Result<MineStatusDto, String> {
     let prefs = state.prefs.lock().clone();
-    let handle = state.wallet.lock().as_ref().cloned();
-    let address = handle
-        .as_ref()
-        .and_then(|w| w.primary_deposit_address().ok())
-        .unwrap_or_default();
+    let address = if state.wallet.lock().is_some() {
+        with_wallet_blocking(&state, |w| {
+            Ok(w.primary_deposit_address().unwrap_or_default())
+        })
+        .await
+        .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mut miner = state.miner.lock();
 
     if let Some(m) = miner.as_mut() {
@@ -1563,10 +1862,10 @@ pub async fn mine_start(
 ) -> Result<(), String> {
     {
         let mut miner = state.miner.lock();
-        if let Some(m) = miner.as_mut() {
-            if m.child.try_wait().ok().flatten().is_none() {
-                return Err("Miner already running".into());
-            }
+        if let Some(m) = miner.as_mut()
+            && m.child.try_wait().ok().flatten().is_none()
+        {
+            return Err("Miner already running".into());
         }
         *miner = None;
     }
@@ -1589,6 +1888,25 @@ pub async fn mine_start(
     let stratum_loopback = endpoint_url(&stratum)
         .map(|u| url_host_loopback(&u))
         .unwrap_or(false);
+    let proxy = miner_socks5_proxy(&prefs, stratum_loopback);
+    if proxy.is_some() {
+        let prefs_for_proxy = prefs.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let desired = transport_kind_for_prefs(&prefs_for_proxy);
+            let proxy_missing = match desired {
+                TransportKind::Nym => !is_nym_running(),
+                TransportKind::Tor => !is_arti_running(),
+                TransportKind::Direct => false,
+            };
+            if proxy_missing {
+                apply_transport_for_prefs(None, &prefs_for_proxy)?;
+            }
+            Ok::<_, String>(())
+        })
+        .await
+        .map_err(|e| format!("Transport start interrupted: {e}"))??;
+    }
+
     let log_path = crate::paths::app_root().join("xmrig.log");
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).map_err(map_err)?;
@@ -1601,8 +1919,8 @@ pub async fn mine_start(
         "keepalive": true,
         "tls": !stratum_loopback
     });
-    if prefs.use_tor && !stratum_loopback {
-        pool["socks5"] = serde_json::json!(format!("127.0.0.1:{}", prefs.tor_socks_port));
+    if let Some(socks5) = proxy {
+        pool["socks5"] = serde_json::json!(socks5);
     }
     let cfg = serde_json::json!({
         "donate-level": 0,
@@ -1669,9 +1987,11 @@ pub async fn set_network(
     *state.prefs.lock() = prefs.clone();
     *state.network.lock() = network;
     close_wallet_and_clear_session(&state);
-    if secure_store::wallet_exists() {
-        let _ = open_existing_wallet(&app, state.inner()).await;
-    }
+    let reopen_res = if secure_store::wallet_exists() {
+        open_existing_wallet(&app, state.inner()).await
+    } else {
+        Ok(())
+    };
     if network_changed {
         let app_clone = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -1686,6 +2006,12 @@ pub async fn set_network(
         .await
         .map_err(|e| format!("Network switch interrupted: {e}"))??;
     }
+    reopen_res.map_err(|e| {
+        format!(
+            "Network switched to {}, but failed to reopen wallet: {e}",
+            network.as_str()
+        )
+    })?;
     Ok(())
 }
 
@@ -1731,7 +2057,7 @@ pub fn backup_mnemonic() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     {
         let mut miner = state.miner.lock();
         if let Some(mut m) = miner.take() {
@@ -1739,6 +2065,9 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
             let _ = m.child.wait();
         }
     }
+    tauri::async_runtime::spawn_blocking(stop_darkirc_if_active)
+        .await
+        .map_err(|e| format!("Chat stop interrupted: {e}"))?;
     close_wallet_and_clear_session(&state);
     let dir = crate::paths::wallet_data_root();
     let _ = std::fs::remove_dir_all(crate::paths::network_dir(Network::Testnet));
@@ -1749,6 +2078,7 @@ pub fn wipe_wallet(state: State<'_, AppState>) -> Result<(), String> {
     let _ = std::fs::remove_file(dir.join("vault.meta.json"));
     let _ = std::fs::remove_file(dir.join("vault.key"));
     crate::dm_store::clear();
+    address_book::delete_key_for_root(&dir);
     secure_store::wipe_secrets().map_err(map_err)?;
     Ok(())
 }
@@ -1760,7 +2090,9 @@ pub fn initial_prefs() -> Prefs {
 #[cfg(test)]
 mod tests {
     use super::{
-        darkirc_transport_for_prefs, parse_hashrate, transport_kind_for_prefs, validate_lwd_url,
+        darkirc_transport_for_prefs, miner_socks5_proxy, parse_hashrate, resolve_xmrig_candidate,
+        sanitize_nickname, transport_kind_for_prefs, validate_host_port, validate_lwd_url,
+        xmrig_sidecar_filename, xmrig_triple_filename,
     };
     use crate::prefs::Prefs;
     use darkfi_mobile_ffi::{DarkircTransport, transport_manager::TransportKind};
@@ -1835,5 +2167,106 @@ mod tests {
         assert!(validate_lwd_url("https://[fc00::1]:443").is_err());
         assert!(validate_lwd_url("https://[::ffff:192.168.0.1]:443").is_err());
         assert!(validate_lwd_url("https://[::ffff:127.0.0.1]:443").is_ok());
+    }
+
+    #[test]
+    fn sanitize_nickname_enforces_charset_and_length() {
+        assert_eq!(sanitize_nickname("alice_42").unwrap(), "alice_42");
+        assert_eq!(sanitize_nickname("  Bob-!@# 99  ").unwrap(), "Bob99");
+        assert_eq!(
+            sanitize_nickname("abcdefghijklmnopqrstuvwxyz012345").unwrap(),
+            "abcdefghijklmnopqrstuvwx"
+        );
+        assert!(sanitize_nickname("").is_err());
+        assert!(sanitize_nickname("!!!---   ").is_err());
+    }
+
+    #[test]
+    fn validate_host_port_allows_loopback_and_public_and_blocks_private() {
+        assert!(validate_host_port("127.0.0.1:18347", "stratum").is_ok());
+        assert!(validate_host_port("localhost:18347", "stratum").is_ok());
+        assert!(validate_host_port("[::1]:18347", "stratum").is_ok());
+        assert!(validate_host_port("pool.example.com:18347", "stratum").is_ok());
+        assert!(validate_host_port("10.0.0.5:18347", "stratum").is_err());
+        assert!(validate_host_port("192.168.1.10:18347", "stratum").is_err());
+        assert!(validate_host_port("169.254.169.254:80", "stratum").is_err());
+        assert!(validate_host_port("[fc00::1]:18347", "stratum").is_err());
+        assert!(validate_host_port("[::ffff:192.168.1.1]:18347", "stratum").is_err());
+    }
+
+    #[test]
+    fn miner_socks5_proxy_routes_nym_and_tor_for_remote_stratum() {
+        let mut prefs = Prefs {
+            use_nym: true,
+            use_tor: false,
+            nym_socks_port: 1080,
+            ..Default::default()
+        };
+        assert_eq!(
+            miner_socks5_proxy(&prefs, false).as_deref(),
+            Some("127.0.0.1:1080")
+        );
+        assert_eq!(miner_socks5_proxy(&prefs, true), None);
+
+        prefs.use_nym = false;
+        prefs.use_tor = true;
+        prefs.tor_socks_port = 9150;
+        assert_eq!(
+            miner_socks5_proxy(&prefs, false).as_deref(),
+            Some("127.0.0.1:9150")
+        );
+        prefs.tor_socks_port = 0;
+        assert_eq!(
+            miner_socks5_proxy(&prefs, false).as_deref(),
+            Some("127.0.0.1:9050")
+        );
+
+        prefs.use_tor = false;
+        assert_eq!(miner_socks5_proxy(&prefs, false), None);
+    }
+
+    #[test]
+    fn xmrig_bin_prefers_adjacent_exe_then_resource_then_dev() {
+        let root = std::env::temp_dir().join(format!("nh_xmrig_test_{}", rand::random::<u64>()));
+        let exe_dir = root.join("bin");
+        let res_dir = root.join("res");
+        let dev_dir = root.join("dev");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&res_dir).unwrap();
+        std::fs::create_dir_all(&dev_dir).unwrap();
+
+        let fake_exe = exe_dir.join("nighthawk");
+        let adjacent = exe_dir.join(xmrig_sidecar_filename());
+        let resource = res_dir.join(xmrig_sidecar_filename());
+        let dev_triple = dev_dir.join(xmrig_triple_filename());
+
+        // Nothing present yet.
+        assert_eq!(
+            resolve_xmrig_candidate(Some(&fake_exe), Some(&resource), Some(&dev_dir)),
+            None
+        );
+
+        // Dev fallback found when only dev triple exists.
+        std::fs::write(&dev_triple, b"dev").unwrap();
+        assert_eq!(
+            resolve_xmrig_candidate(Some(&fake_exe), Some(&resource), Some(&dev_dir)),
+            Some(dev_triple.clone())
+        );
+
+        // Resource takes precedence over dev fallback.
+        std::fs::write(&resource, b"res").unwrap();
+        assert_eq!(
+            resolve_xmrig_candidate(Some(&fake_exe), Some(&resource), Some(&dev_dir)),
+            Some(resource.clone())
+        );
+
+        // Adjacent to current_exe() takes highest precedence (Tauri 2 externalBin layout).
+        std::fs::write(&adjacent, b"adj").unwrap();
+        assert_eq!(
+            resolve_xmrig_candidate(Some(&fake_exe), Some(&resource), Some(&dev_dir)),
+            Some(adjacent.clone())
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

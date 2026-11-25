@@ -3,14 +3,15 @@ import { customElement, state } from "lit/decorators.js";
 import QRCode from "qrcode";
 import {
   api,
+  formatInvokeError,
   spendReady,
   type LightSyncState,
+  type MintAuthority,
   type TokenBalance,
   type TxRecord,
 } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { formatDrkAtomic } from "../lib/amount";
-import { formatInvokeError } from "../lib/api";
+import { formatDrkAtomic, isValidDrkAmount } from "../lib/amount";
 import {
   formatLightSyncBanner,
   formatLightSyncMethod,
@@ -25,13 +26,21 @@ export class WalletScreen extends LitElement {
   @state() private syncDetail: LightSyncState | null = null;
   @state() private txs: TxRecord[] = [];
   @state() private tokens: TokenBalance[] = [];
+  @state() private mintAuthorities: MintAuthority[] = [];
   @state() private txExtra: Record<string, { memo?: string; recipient?: string }> =
     {};
   @state() private qr = "";
   @state() private error = "";
+  @state() private tokenMessage = "";
   @state() private reorgMsg = "";
   @state() private reorgHeight: number | null = null;
   @state() private refreshing = false;
+  @state() private tokenBusy = false;
+  @state() private showGenerateToken = false;
+  @state() private newTokenAlias = "";
+  @state() private mintTargetTokenId = "";
+  @state() private mintAmount = "";
+  @state() private mintRecipient = "";
   private unlistenReorg?: UnlistenFn;
   private onShellSync = (e: Event) => {
     const snap = (e as CustomEvent<LightSyncState>).detail;
@@ -179,8 +188,76 @@ export class WalletScreen extends LitElement {
     .token {
       display: flex;
       justify-content: space-between;
+      align-items: center;
+      gap: 8px;
       padding: 6px 0;
       font-size: var(--font-size-sm);
+      flex-wrap: wrap;
+    }
+    .token-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .token-header h3 {
+      margin: 0;
+    }
+    button.small {
+      margin-top: 0;
+      padding: 6px 10px;
+      font-size: var(--font-size-xs);
+    }
+    button.secondary {
+      background: var(--color-secondary-fill);
+      color: var(--color-text-header);
+      border: 1px solid var(--color-steel-border);
+    }
+    button.danger {
+      background: var(--color-dangerous-banner-bg);
+      color: var(--color-dangerous-banner-fg);
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: var(--font-size-xs);
+      border: 1px solid var(--color-steel-border);
+      color: var(--color-text-muted);
+    }
+    .badge.frozen {
+      color: var(--color-warning);
+      border-color: var(--color-warning);
+    }
+    .inline-form {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: var(--border-radius-md);
+      background: var(--color-elevated);
+      border: 1px solid var(--color-steel-border);
+    }
+    .inline-form label {
+      display: block;
+      margin-top: 8px;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
+    .inline-form input {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 4px;
+      padding: 8px 10px;
+      border-radius: var(--border-radius-md);
+      border: 1px solid var(--color-steel-border);
+      background: var(--color-charcoal-deep);
+      color: var(--color-text-header);
+      font-family: inherit;
+    }
+    .ok {
+      color: var(--color-accent-muted);
+      font-size: var(--font-size-sm);
+      word-break: break-all;
     }
   `;
 
@@ -247,6 +324,11 @@ export class WalletScreen extends LitElement {
       } catch {
         this.tokens = [];
       }
+      try {
+        this.mintAuthorities = await api.listMintAuthorities();
+      } catch {
+        this.mintAuthorities = [];
+      }
       const extras: Record<string, { memo?: string; recipient?: string }> = {};
       for (const t of this.txs.slice(0, 20)) {
         const [memo, recipient] = await Promise.all([
@@ -305,8 +387,78 @@ export class WalletScreen extends LitElement {
       const e = await api.handleReorgRecovery(this.reorgHeight);
       this.reorgMsg = e.summaryMessage;
       await this.reload();
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.error = formatInvokeError(e);
+    }
+  }
+
+  private async generateToken() {
+    this.error = "";
+    this.tokenMessage = "";
+    this.tokenBusy = true;
+    try {
+      const id = await api.tokenGenerate(this.newTokenAlias.trim() || undefined);
+      this.tokenMessage = `Generated token authority: ${id}`;
+      this.newTokenAlias = "";
+      this.showGenerateToken = false;
+      this.mintAuthorities = await api.listMintAuthorities().catch(() => []);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.tokenBusy = false;
+    }
+  }
+
+  private async mintToken() {
+    if (!this.mintTargetTokenId) return;
+    if (!isValidDrkAmount(this.mintAmount)) {
+      this.error = "Enter a valid mint amount (up to 8 decimal places)";
+      return;
+    }
+    const recipient = (this.mintRecipient || this.address).trim();
+    if (!recipient) {
+      this.error = "Recipient address is required";
+      return;
+    }
+    this.error = "";
+    this.tokenMessage = "";
+    this.tokenBusy = true;
+    try {
+      const tx = await api.tokenMint({
+        tokenId: this.mintTargetTokenId,
+        amount: this.mintAmount.trim(),
+        recipientAddress: recipient,
+      });
+      this.tokenMessage = `Minted token (tx: ${tx})`;
+      this.mintTargetTokenId = "";
+      this.mintAmount = "";
+      await this.reload();
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.tokenBusy = false;
+    }
+  }
+
+  private async freezeToken(tokenId: string, label: string) {
+    if (
+      !confirm(
+        `Permanently freeze minting for "${label}"? No additional tokens can ever be minted after freezing.`,
+      )
+    ) {
+      return;
+    }
+    this.error = "";
+    this.tokenMessage = "";
+    this.tokenBusy = true;
+    try {
+      const tx = await api.tokenFreeze(tokenId);
+      this.tokenMessage = `Token frozen (tx: ${tx})`;
+      await this.reload();
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.tokenBusy = false;
     }
   }
 
@@ -383,21 +535,125 @@ export class WalletScreen extends LitElement {
           </button>
         </div>
       </div>
-      ${this.tokens.length
-        ? html`
-            <div class="card">
-              <h3>Tokens</h3>
+      <div class="card">
+        <div class="token-header">
+          <h3>Tokens &amp; Minting</h3>
+          <button
+            class="secondary small"
+            ?disabled=${this.tokenBusy}
+            @click=${() => {
+              this.showGenerateToken = !this.showGenerateToken;
+              this.error = "";
+            }}
+          >
+            ${this.showGenerateToken ? "Close" : "+ Generate Token"}
+          </button>
+        </div>
+        ${this.showGenerateToken
+          ? html`
+              <div class="inline-form">
+                <label>Alias (optional)</label>
+                <input
+                  placeholder="e.g. MYTOK"
+                  .value=${this.newTokenAlias}
+                  @input=${(e: Event) =>
+                    (this.newTokenAlias = (e.target as HTMLInputElement).value)}
+                />
+                <div style="margin-top: 10px">
+                  <button
+                    class="small"
+                    ?disabled=${this.tokenBusy}
+                    @click=${this.generateToken}
+                  >
+                    ${this.tokenBusy ? "Generating…" : "Create Mint Authority"}
+                  </button>
+                </div>
+              </div>
+            `
+          : null}
+        ${this.tokens.length
+          ? html`
               ${this.tokens.map(
                 (t) => html`
                   <div class="token">
-                    <span>${t.displayLabel || t.tokenId.slice(0, 16)}…</span>
+                    <span>${t.displayLabel || `${t.tokenId.slice(0, 16)}…`}</span>
                     <span>${formatDrkAtomic(t.balanceAtomic)}</span>
                   </div>
                 `,
               )}
-            </div>
-          `
-        : null}
+            `
+          : html`<div class="sub">No custom token balances yet</div>`}
+        ${this.mintAuthorities.length
+          ? html`
+              <div style="margin-top: 12px">
+                <div class="sub" style="margin-bottom: 6px">Mint Authorities</div>
+                ${this.mintAuthorities.map((a) => {
+                  const display = a.alias || `${a.tokenId.slice(0, 14)}…`;
+                  const isMinting = this.mintTargetTokenId === a.tokenId;
+                  return html`
+                    <div class="token">
+                      <span>
+                        <strong>${display}</strong>
+                        <span class="badge ${a.frozen ? "frozen" : ""}"
+                          >${a.frozen ? "Frozen" : "Mintable"}</span
+                        >
+                      </span>
+                      <span>
+                        <button
+                          class="small"
+                          ?disabled=${a.frozen || this.tokenBusy || !(snap ? spendReady(snap) : false)}
+                          @click=${() => {
+                            this.mintTargetTokenId = isMinting ? "" : a.tokenId;
+                            this.mintRecipient = this.address;
+                            this.mintAmount = "";
+                          }}
+                        >
+                          ${isMinting ? "Cancel" : "Mint"}
+                        </button>
+                        <button
+                          class="danger small"
+                          ?disabled=${a.frozen || this.tokenBusy || !(snap ? spendReady(snap) : false)}
+                          @click=${() => this.freezeToken(a.tokenId, display)}
+                        >
+                          Freeze
+                        </button>
+                      </span>
+                    </div>
+                    ${isMinting
+                      ? html`
+                          <div class="inline-form">
+                            <label>Amount to mint</label>
+                            <input
+                              placeholder="e.g. 100"
+                              .value=${this.mintAmount}
+                              @input=${(e: Event) =>
+                                (this.mintAmount = (e.target as HTMLInputElement).value)}
+                            />
+                            <label>Recipient address</label>
+                            <input
+                              .value=${this.mintRecipient}
+                              @input=${(e: Event) =>
+                                (this.mintRecipient = (e.target as HTMLInputElement).value)}
+                            />
+                            <div style="margin-top: 10px">
+                              <button
+                                class="small"
+                                ?disabled=${this.tokenBusy}
+                                @click=${this.mintToken}
+                              >
+                                ${this.tokenBusy ? "Minting…" : "Confirm Mint"}
+                              </button>
+                            </div>
+                          </div>
+                        `
+                      : null}
+                  `;
+                })}
+              </div>
+            `
+          : null}
+        ${this.tokenMessage ? html`<p class="ok">${this.tokenMessage}</p>` : null}
+      </div>
       <h3>Recent activity</h3>
       ${this.txs.length === 0
         ? html`<p class="sub">No transactions yet</p>`

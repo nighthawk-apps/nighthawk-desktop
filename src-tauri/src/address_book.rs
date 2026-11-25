@@ -1,7 +1,7 @@
 //! Local encrypted address book (desktop-only; not part of UniFFI).
 //!
 //! Stored in `address_book.db` with authenticated encryption (AES-256-GCM)
-//! using an OS keychain-backed key (with automatic fallback to a local machine key).
+//! using an OS keychain-backed key (fails closed if the OS keychain is unavailable).
 //! Automatically migrates legacy plaintext `address_book.json` if present.
 
 use crate::paths::{address_book_path, legacy_address_book_path};
@@ -14,6 +14,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
 
 const ADDR_BOOK_MAGIC: &[u8; 12] = b"DRK_ADDR_DB1";
 const KEYRING_SERVICE: &str = "com.nighthawkapps.desktop.addressbook";
@@ -35,44 +36,134 @@ struct AddressBookFile {
     entries: Vec<AddressBookEntry>,
 }
 
-/// Derive or load the 32-byte AES-256 key for the active wallet data root.
-fn get_address_book_key() -> Result<[u8; 32]> {
-    let data_root = crate::paths::wallet_data_root();
-    let account = format!(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyringErr {
+    NoEntry,
+    Other,
+}
+
+fn keyring_account_for_root(data_root: &Path) -> String {
+    format!(
         "addr_{}",
         hex::encode(&Sha256::digest(data_root.to_string_lossy().as_bytes())[..8])
-    );
+    )
+}
 
-    // Try OS keychain first
+fn decode_key_hex(raw: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(raw.trim()).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Some(key)
+}
+
+/// Delete the address book encryption key from the OS keychain for a specific profile root.
+pub fn delete_key_for_root(data_root: &Path) {
+    let account = keyring_account_for_root(data_root);
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) {
-        if let Ok(pw) = entry.get_password() {
-            if let Ok(bytes) = hex::decode(pw.trim()) {
-                if bytes.len() == 32 {
-                    let mut key = [0u8; 32];
-                    key.copy_from_slice(&bytes);
-                    return Ok(key);
+        let _ = entry.delete_credential();
+    }
+}
+
+/// Read-only key lookup helper: NEVER creates or overwrites a keyring entry.
+fn read_key_with<G>(mut get: G) -> Result<[u8; 32]>
+where
+    G: FnMut() -> std::result::Result<String, KeyringErr>,
+{
+    match get() {
+        Ok(pw) => decode_key_hex(&pw)
+            .ok_or_else(|| anyhow!("Address book key in OS keychain is malformed")),
+        Err(KeyringErr::NoEntry) => Err(anyhow!(
+            "Address book key missing from OS keychain — refusing to overwrite"
+        )),
+        Err(KeyringErr::Other) => Err(anyhow!(
+            "OS keychain unavailable or locked for address book key — refusing to overwrite"
+        )),
+    }
+}
+
+/// Write-path key lookup/creation helper: creates a new random key ONLY on
+/// `KeyringErr::NoEntry` and verifies read-back persistence. Never overwrites
+/// on locked keychain, transient errors, or existing entries.
+fn ensure_key_with<G, S, D>(mut get: G, mut set: S, mut delete: D) -> Result<[u8; 32]>
+where
+    G: FnMut() -> std::result::Result<String, KeyringErr>,
+    S: FnMut(&str) -> std::result::Result<(), KeyringErr>,
+    D: FnMut(),
+{
+    match get() {
+        Ok(pw) => decode_key_hex(&pw).ok_or_else(|| {
+            anyhow!("Address book key in OS keychain is malformed — refusing to overwrite")
+        }),
+        Err(KeyringErr::NoEntry) => {
+            let mut key = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut key);
+            let encoded = hex::encode(key);
+            set(&encoded).map_err(|_| {
+                anyhow!("OS keychain rejected saving the address book encryption key")
+            })?;
+            // Round-trip read-back verification so silent keyring failures cannot
+            // leave ciphertext that will never decrypt after restart.
+            match get().ok().and_then(|s| decode_key_hex(&s)) {
+                Some(stored) if stored == key => Ok(key),
+                _ => {
+                    delete();
+                    anyhow::bail!("OS keychain failed read-back verification for address book key");
                 }
             }
         }
-
-        // Generate and save to keyring if writable
-        let mut key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut key);
-        if entry.set_password(&hex::encode(key)).is_ok() {
-            return Ok(key);
-        }
+        Err(KeyringErr::Other) => anyhow::bail!(
+            "OS keychain unavailable or locked for address book encryption key; \
+             refusing to overwrite or fall back to plaintext"
+        ),
     }
+}
 
-    // Fail closed when OS keychain is unavailable; never persist raw encryption keys to disk.
+fn map_keyring_err(e: keyring::Error) -> KeyringErr {
+    match e {
+        keyring::Error::NoEntry => KeyringErr::NoEntry,
+        _ => KeyringErr::Other,
+    }
+}
+
+/// Read an existing 32-byte AES-256 key for the active wallet data root.
+/// Never creates or overwrites a keyring entry.
+fn read_address_book_key() -> Result<[u8; 32]> {
+    let data_root = crate::paths::wallet_data_root();
     #[cfg(test)]
-    {
-        if data_root.to_string_lossy().contains("nh_test_") {
-            return Ok([0x42u8; 32]);
-        }
+    if data_root.to_string_lossy().contains("nh_test_") {
+        return Ok([0x42u8; 32]);
     }
+    let account = keyring_account_for_root(&data_root);
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &account).map_err(|_| {
+        anyhow!("OS keychain unavailable for address book encryption key; refusing fallback")
+    })?;
+    read_key_with(|| entry.get_password().map_err(map_keyring_err))
+}
 
-    anyhow::bail!(
-        "OS keychain unavailable for address book encryption key; refusing unkeyed or plaintext-key fallback"
+/// Load or create (ONLY on `NoEntry` + read-back verification) the 32-byte
+/// AES-256 key for the active wallet data root.
+fn ensure_address_book_key() -> Result<[u8; 32]> {
+    let data_root = crate::paths::wallet_data_root();
+    #[cfg(test)]
+    if data_root.to_string_lossy().contains("nh_test_") {
+        return Ok([0x42u8; 32]);
+    }
+    let account = keyring_account_for_root(&data_root);
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &account).map_err(|_| {
+        anyhow!(
+            "OS keychain unavailable for address book encryption key; \
+             refusing unkeyed or plaintext-key fallback"
+        )
+    })?;
+    ensure_key_with(
+        || entry.get_password().map_err(map_keyring_err),
+        |v| entry.set_password(v).map_err(map_keyring_err),
+        || {
+            let _ = entry.delete_credential();
+        },
     )
 }
 
@@ -91,7 +182,7 @@ fn load() -> Result<AddressBookFile> {
         let nonce_slice = &bytes[ADDR_BOOK_MAGIC.len()..ADDR_BOOK_MAGIC.len() + 12];
         let ciphertext = &bytes[ADDR_BOOK_MAGIC.len() + 12..];
 
-        let key = get_address_book_key()?;
+        let key = read_address_book_key()?;
         let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow!("{e}"))?;
         let nonce = Nonce::from_slice(nonce_slice);
         let decrypted = cipher
@@ -104,14 +195,13 @@ fn load() -> Result<AddressBookFile> {
     }
 
     // One-time automatic migration from legacy plaintext JSON
-    if legacy_path.exists() {
-        if let Ok(s) = fs::read_to_string(&legacy_path) {
-            if let Ok(file) = serde_json::from_str::<AddressBookFile>(&s) {
-                save(&file)?;
-                let _ = fs::remove_file(&legacy_path);
-                return Ok(file);
-            }
-        }
+    if legacy_path.exists()
+        && let Ok(s) = fs::read_to_string(&legacy_path)
+        && let Ok(file) = serde_json::from_str::<AddressBookFile>(&s)
+    {
+        save(&file)?;
+        let _ = fs::remove_file(&legacy_path);
+        return Ok(file);
     }
 
     Ok(AddressBookFile::default())
@@ -119,12 +209,8 @@ fn load() -> Result<AddressBookFile> {
 
 fn save(book: &AddressBookFile) -> Result<()> {
     let db_path = address_book_path();
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let plaintext = serde_json::to_vec_pretty(book)?;
-    let key = get_address_book_key()?;
+    let key = ensure_address_book_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow!("{e}"))?;
 
     let mut nonce_bytes = [0u8; 12];
@@ -140,10 +226,7 @@ fn save(book: &AddressBookFile) -> Result<()> {
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
 
-    // Atomic write
-    let tmp_path = db_path.with_extension("tmp");
-    fs::write(&tmp_path, out).context("write address book tmp")?;
-    fs::rename(&tmp_path, &db_path).context("atomic rename address book db")?;
+    crate::paths::write_atomic(&db_path, &out, true).context("write address book db")?;
     Ok(())
 }
 
@@ -252,7 +335,110 @@ mod tests {
         assert!(!content_str.contains("drk1secretaddress123"));
         assert!(!content_str.contains("Alice"));
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(address_book_path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
         crate::paths::set_wallet_data_root(None);
         let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn read_key_fails_closed_on_missing_or_locked_without_overwriting() {
+        assert!(read_key_with(|| Err(KeyringErr::NoEntry)).is_err());
+        assert!(read_key_with(|| Err(KeyringErr::Other)).is_err());
+        assert!(read_key_with(|| Ok("not-hex".into())).is_err());
+
+        let expected = [0xab_u8; 32];
+        let hex_key = hex::encode(expected);
+        assert_eq!(read_key_with(|| Ok(hex_key.clone())).unwrap(), expected);
+    }
+
+    #[test]
+    fn ensure_key_creates_only_on_no_entry_and_verifies_readback() {
+        use std::cell::RefCell;
+
+        let stored = RefCell::new(None::<String>);
+        let mut set_calls = 0usize;
+        let mut delete_calls = 0usize;
+
+        let created = ensure_key_with(
+            || stored.borrow().clone().ok_or(KeyringErr::NoEntry),
+            |val| {
+                set_calls += 1;
+                *stored.borrow_mut() = Some(val.to_string());
+                Ok(())
+            },
+            || {
+                delete_calls += 1;
+                *stored.borrow_mut() = None;
+            },
+        )
+        .unwrap();
+        assert_eq!(set_calls, 1);
+        assert_eq!(delete_calls, 0);
+        assert_eq!(
+            stored.borrow().as_deref(),
+            Some(hex::encode(created).as_str())
+        );
+
+        // Second call returns the existing key without writing again.
+        let again = ensure_key_with(
+            || stored.borrow().clone().ok_or(KeyringErr::NoEntry),
+            |_| {
+                set_calls += 1;
+                Ok(())
+            },
+            || delete_calls += 1,
+        )
+        .unwrap();
+        assert_eq!(again, created);
+        assert_eq!(set_calls, 1);
+    }
+
+    #[test]
+    fn ensure_key_refuses_overwrite_on_locked_or_corrupt_and_cleans_bad_readback() {
+        let mut set_calls = 0usize;
+        let locked = ensure_key_with(
+            || Err(KeyringErr::Other),
+            |_| {
+                set_calls += 1;
+                Ok(())
+            },
+            || {},
+        );
+        assert!(locked.is_err());
+        assert_eq!(
+            set_calls, 0,
+            "locked keychain must never trigger set_password"
+        );
+
+        let corrupt = ensure_key_with(
+            || Ok("deadbeef".into()),
+            |_| {
+                set_calls += 1;
+                Ok(())
+            },
+            || {},
+        );
+        assert!(corrupt.is_err());
+        assert_eq!(
+            set_calls, 0,
+            "corrupt entry must never be blindly overwritten"
+        );
+
+        // Silent drop / read-back mismatch must delete and fail.
+        let mut deleted = false;
+        let bad_readback =
+            ensure_key_with(|| Err(KeyringErr::NoEntry), |_| Ok(()), || deleted = true);
+        assert!(bad_readback.is_err());
+        assert!(deleted);
     }
 }

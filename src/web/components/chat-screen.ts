@@ -1,7 +1,9 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { api, type ChatMessage, type DmKeypair } from "../lib/api";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { api, formatInvokeError, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { isValidDrkAmount } from "../lib/amount";
 import {
   bumpDmUnread,
   clearDmUnread,
@@ -32,7 +34,12 @@ import {
   stageChatPayContext,
   type ChatReceiptDetail,
 } from "../lib/chat-wallet";
-import { buildPaymentUri } from "../lib/payment-uri";
+import {
+  buildPaymentUri,
+  MAX_PAYMENT_MEMO_BYTES,
+  truncateUtf8Bytes,
+  utf8ByteLength,
+} from "../lib/payment-uri";
 
 const CHANNELS: string[] = [...DEFAULT_PUBLIC_CHANNELS];
 
@@ -63,10 +70,15 @@ export class ChatScreen extends LitElement {
   @state() private dmContacts: DmContact[] = [];
   @state() private dmContactLabel = "";
   @state() private autoReconnect = true;
+  @state() private showRequestModal = false;
+  @state() private requestAmount = "";
+  @state() private requestMemo = "";
+  @state() private requestError = "";
   /** Per-channel history (oldest → newest), like mobile channelMessages. */
   private channelMessages: Record<string, ChatMessage[]> = {};
   /** Per-channel unread counts, like mobile Channel.unreadCount. */
   @state() private unreadCounts: Record<string, number> = {};
+  private static readonly MAX_SEEN_EVENT_IDS = 5000;
   private seenEventIds = new Set<string>();
   private unlisten?: UnlistenFn;
   private toastTimer?: number;
@@ -380,6 +392,73 @@ export class ChatScreen extends LitElement {
       font-size: var(--font-size-xs);
       color: var(--color-text-muted);
     }
+    .m .pay-card {
+      grid-column: 2;
+      margin-top: 6px;
+      padding: 10px 12px;
+      border-radius: var(--border-radius-md);
+      border: 1px solid var(--color-steel-border);
+      background: var(--color-charcoal-raised);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 360px;
+    }
+    .m .pay-card .pay-title {
+      font-weight: 600;
+      color: var(--color-text-header);
+    }
+    .m .pay-card .pay-tx {
+      font-family: var(--font-family-mono);
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      word-break: break-all;
+    }
+    .m .pay-card button {
+      align-self: flex-start;
+      padding: 6px 14px;
+      font-size: var(--font-size-xs);
+    }
+    .req-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 120;
+      padding: 16px;
+    }
+    .req-modal {
+      background: var(--color-charcoal-raised);
+      border: 1px solid var(--color-steel-border);
+      border-radius: var(--border-radius-lg);
+      padding: 20px;
+      max-width: 420px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .req-modal h3 {
+      margin: 0 0 12px;
+      color: var(--color-text-header);
+    }
+    .req-modal label {
+      display: block;
+      margin-top: 10px;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
+    .req-modal input {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 4px;
+    }
+    .req-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 16px;
+    }
     .nick {
       font-weight: 600;
       text-align: left;
@@ -545,6 +624,10 @@ export class ChatScreen extends LitElement {
   private async ingestMessage(m: ChatMessage) {
     if (this.seenEventIds.has(m.eventId)) return;
     this.seenEventIds.add(m.eventId);
+    if (this.seenEventIds.size > ChatScreen.MAX_SEEN_EVENT_IDS) {
+      const oldest = this.seenEventIds.values().next().value;
+      if (oldest !== undefined) this.seenEventIds.delete(oldest);
+    }
 
     // The daemon already saltbox-decrypts nick DMs before this event.
     // Decrypting again would show the inner ciphertext.
@@ -580,6 +663,12 @@ export class ChatScreen extends LitElement {
       );
       if (matchedContact && !m.isOutgoing) {
         this.dmContacts = bumpDmUnread(this.dmContacts, matchedContact.publicB58);
+        void api
+          .dmContactsBumpUnread(matchedContact.publicB58)
+          .then((list) => {
+            this.dmContacts = list;
+          })
+          .catch(() => undefined);
       }
     }
   }
@@ -712,13 +801,19 @@ export class ChatScreen extends LitElement {
     });
   }
 
-  private onChatLink(e: Event, url: string) {
+  private async onChatLink(e: Event, url: string) {
     if (!isClearnetHttp(url)) return;
     e.preventDefault();
     const open = window.confirm(
       "This http(s) link leaves Nym/Tor and can reveal your IP. Open it in the system browser?",
     );
-    if (open) window.open(url, "_blank", "noopener,noreferrer");
+    if (open) {
+      try {
+        await openUrl(url);
+      } catch (err: unknown) {
+        this.error = formatInvokeError(err);
+      }
+    }
   }
 
   private payInvoice(raw: string) {
@@ -761,31 +856,43 @@ export class ChatScreen extends LitElement {
         this.messages = this.channelMessages[key];
       }
       await this.deliverChat(targetChannel, wireBody);
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.pushSystem(
-        `Payment receipt saved locally (chat relay unavailable: ${String(e)})`,
+        `Payment receipt saved locally (chat relay unavailable: ${formatInvokeError(e)})`,
         targetChannel,
       );
     }
   }
 
-  private async postRequest() {
+  private openInlineRequest() {
+    this.requestAmount = "";
+    this.requestMemo = "";
+    this.requestError = "";
+    this.showRequestModal = true;
+  }
+
+  private async submitInlineRequest() {
+    const amt = this.requestAmount.trim();
+    if (amt && !isValidDrkAmount(amt)) {
+      this.requestError = "Enter a valid DRK amount (up to 8 decimal places)";
+      return;
+    }
+    this.requestError = "";
     try {
       const address = (await api.walletAddress()).trim();
       if (!address) {
-        this.error = "Wallet address is not ready yet.";
+        this.requestError = "Wallet address is not ready yet.";
         return;
       }
-      const amount = window.prompt("Amount (DRK, optional)") ?? "";
-      const memo = window.prompt("Memo (optional)") ?? "";
       this.draft = buildPaymentUri(
         address,
-        amount.trim() || undefined,
-        memo.trim() || undefined,
+        amt || undefined,
+        this.requestMemo.trim() || undefined,
       );
+      this.showRequestModal = false;
       await this.send();
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.requestError = formatInvokeError(e);
     }
   }
 
@@ -811,11 +918,20 @@ export class ChatScreen extends LitElement {
   }
 
   private async genDmKeys() {
+    if (
+      this.dmKeys &&
+      !window.confirm(
+        "Rotate your DM keypair? Existing contacts will need your new public key to exchange encrypted DMs.",
+      )
+    ) {
+      return;
+    }
     try {
       this.dmKeys = await api.dmGenerateKeypair();
       this.error = "";
-    } catch (e: any) {
-      this.error = String(e);
+      this.showToast(this.dmKeys ? "DM keypair ready" : "");
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -860,8 +976,8 @@ export class ChatScreen extends LitElement {
       if (!this.isTerminalPhase(this.status) || this.status === "connected") {
         this.startStatusPoll();
       }
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
       this.status = await api.chatStatus().catch(() => "failed");
       if (this.autoReconnect && this.wasConnected) {
         this.scheduleReconnect();
@@ -889,8 +1005,8 @@ export class ChatScreen extends LitElement {
       if (saved) {
         await this.selectContact(saved);
       }
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -917,8 +1033,8 @@ export class ChatScreen extends LitElement {
   private async deleteContact(id: string) {
     try {
       this.dmContacts = await api.dmContactsRemove(id);
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -964,9 +1080,10 @@ export class ChatScreen extends LitElement {
             await api.setChatNick(arg);
             this.nick = await api.getChatNick();
             this.pushSystem(`Your nickname is now: ${this.nick}`);
-          } catch (e: any) {
-            this.error = String(e);
-            this.pushSystem(String(e));
+          } catch (e: unknown) {
+            const msg = formatInvokeError(e);
+            this.error = msg;
+            this.pushSystem(msg);
           }
           return;
         }
@@ -1015,8 +1132,8 @@ export class ChatScreen extends LitElement {
             const actionText = `* ${nick} ${arg}`;
             this.pushOptimistic(nick, actionText);
             await this.deliverChat(this.channel, actionText);
-          } catch (e: any) {
-            this.error = String(e);
+          } catch (e: unknown) {
+            this.error = formatInvokeError(e);
           }
           return;
         }
@@ -1031,8 +1148,8 @@ export class ChatScreen extends LitElement {
           try {
             await this.deliverChat(target, msgContent);
             this.pushSystem(`→ ${target}: ${msgContent}`);
-          } catch (e: any) {
-            this.error = String(e);
+          } catch (e: unknown) {
+            this.error = formatInvokeError(e);
           }
           return;
         }
@@ -1040,8 +1157,8 @@ export class ChatScreen extends LitElement {
           try {
             this.nick = await api.getChatNick();
             this.pushSystem(`You are ${this.nick || "(unnamed)"} on ${this.channel}`);
-          } catch (e: any) {
-            this.error = String(e);
+          } catch (e: unknown) {
+            this.error = formatInvokeError(e);
           }
           return;
         }
@@ -1090,8 +1207,8 @@ export class ChatScreen extends LitElement {
       const nick = this.nick || (await api.getChatNick()) || "me";
       this.pushOptimistic(nick, displayBody);
       await this.deliverChat(this.channel, body);
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -1323,7 +1440,8 @@ export class ChatScreen extends LitElement {
                   const invoice = findInvoice(m.message);
                   if (!invoice) return null;
                   return html`<div class="pay-card">
-                    <div>Payment request${invoice.amount ? html` · ${invoice.amount} DRK` : ""}</div>
+                    <div class="pay-title">Payment request${invoice.amount ? html` · ${invoice.amount} DRK` : ""}</div>
+                    ${invoice.memo ? html`<div class="status">${invoice.memo}</div>` : null}
                     <button
                       class="primary"
                       @click=${(e: Event) => {
@@ -1339,8 +1457,8 @@ export class ChatScreen extends LitElement {
                   const receipt = parseReceipt(m.message);
                   if (!receipt) return null;
                   return html`<div class="pay-card">
-                    Payment ${receipt.phase} · ${receipt.amount}
-                    ${receipt.txId ? html`<div>${receipt.txId}</div>` : null}
+                    <div class="pay-title">Payment ${receipt.phase} · ${receipt.amount} DRK</div>
+                    ${receipt.txId ? html`<div class="pay-tx">${receipt.txId}</div>` : null}
                   </div>`;
                 })()}
               </div>
@@ -1361,10 +1479,58 @@ export class ChatScreen extends LitElement {
           @input=${(e: Event) =>
             (this.draft = (e.target as HTMLInputElement).value)}
         />
-        <button @click=${() => this.postRequest()}>Request</button>
+        <button @click=${() => this.openInlineRequest()}>Request</button>
         <button class="primary" @click=${this.send}>Send</button>
       </div>
       ${this.error ? html`<p class="err">${this.error}</p>` : null}
+      ${this.showRequestModal
+        ? html`
+            <div
+              class="req-modal-overlay"
+              @click=${(e: Event) => {
+                if (e.target === e.currentTarget) this.showRequestModal = false;
+              }}
+            >
+              <div class="req-modal">
+                <h3>Post Payment Request</h3>
+                <label>Amount (DRK, optional)</label>
+                <input
+                  placeholder="e.g. 1.5"
+                  .value=${this.requestAmount}
+                  @keydown=${(e: KeyboardEvent) =>
+                    e.key === "Enter" && this.submitInlineRequest()}
+                  @input=${(e: Event) =>
+                    (this.requestAmount = (e.target as HTMLInputElement).value)}
+                />
+                <label
+                  >Memo (optional, ${utf8ByteLength(this.requestMemo)}/${MAX_PAYMENT_MEMO_BYTES}
+                  UTF-8 bytes)</label
+                >
+                <input
+                  placeholder="Optional note"
+                  .value=${this.requestMemo}
+                  @keydown=${(e: KeyboardEvent) =>
+                    e.key === "Enter" && this.submitInlineRequest()}
+                  @input=${(e: Event) =>
+                    (this.requestMemo = truncateUtf8Bytes(
+                      (e.target as HTMLInputElement).value,
+                    ))}
+                />
+                ${this.requestError
+                  ? html`<p class="err">${this.requestError}</p>`
+                  : null}
+                <div class="req-modal-actions">
+                  <button @click=${() => (this.showRequestModal = false)}>
+                    Cancel
+                  </button>
+                  <button class="primary" @click=${this.submitInlineRequest}>
+                    Post Request
+                  </button>
+                </div>
+              </div>
+            </div>
+          `
+        : null}
     `;
   }
 }

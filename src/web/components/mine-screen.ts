@@ -1,6 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { api, type MineStatus, type Prefs } from "../lib/api";
+import { api, formatInvokeError, type MineStatus, type Prefs } from "../lib/api";
 
 function mineErrorHint(log: string, err: string): string {
   const blob = `${err}\n${log}`.toLowerCase();
@@ -10,8 +10,13 @@ function mineErrorHint(log: string, err: string): string {
   if (blob.includes("connection refused") || blob.includes("connect")) {
     return "Cannot reach stratum — start darkfid with stratum enabled (testnet :18347 / mainnet :8347).";
   }
-  if (blob.includes("failed to start xmrig") || blob.includes("no such file")) {
-    return "xmrig binary missing — run scripts/fetch-xmrig.sh or install xmrig (e.g. Homebrew).";
+  if (
+    blob.includes("failed to start xmrig") ||
+    blob.includes("bundled xmrig") ||
+    blob.includes("not a known nighthawk build") ||
+    blob.includes("no such file")
+  ) {
+    return "Bundled xmrig sidecar is missing or failed SHA-256 verification. Reinstall Nighthawk Desktop or rebuild with an allowlisted xmrig binary.";
   }
   if (blob.includes("unlock wallet")) {
     return "Unlock your wallet before mining so payouts go to your deposit address.";
@@ -160,8 +165,8 @@ export class MineScreen extends LitElement {
           composed: true,
         }),
       );
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
       this.hint = mineErrorHint(this.status?.lastLog || "", this.error);
     }
   }
@@ -175,15 +180,20 @@ export class MineScreen extends LitElement {
       await this.refresh();
       // Surface stratum rejection quickly from the first log lines
       setTimeout(() => this.refresh(), 2500);
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
       this.hint = mineErrorHint(this.status?.lastLog || "", this.error);
     }
   }
 
   private async stop() {
-    await api.mineStop();
-    await this.refresh();
+    this.error = "";
+    try {
+      await api.mineStop();
+      await this.refresh();
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    }
   }
 
   render() {
@@ -205,7 +215,7 @@ export class MineScreen extends LitElement {
         <input
           type="range"
           min="1"
-          max="14"
+          max="64"
           .value=${String(this.threads)}
           @input=${this.onThreadsInput}
         />

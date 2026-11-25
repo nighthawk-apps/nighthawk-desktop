@@ -1,19 +1,18 @@
 {
   "name": "nighthawk-app-desktop",
   "private": true,
-  "version": "3.1.19",
+  "version": "3.1.20",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --experimental-strip-types src/web/lib/payment-uri.test.ts && node --experimental-strip-types src/web/lib/theme.test.ts && node --experimental-strip-types src/web/lib/chat-chrome.test.ts && node --experimental-strip-types src/web/lib/chat-wallet.test.ts && node --experimental-strip-types src/web/lib/dm-contacts.test.ts && node --experimental-strip-types src/web/lib/amount.test.ts && node --experimental-strip-types src/web/lib/chat-defaults.test.ts"
+    "test": "node --experimental-strip-types src/web/lib/payment-uri.test.ts && node --experimental-strip-types src/web/lib/theme.test.ts && node --experimental-strip-types src/web/lib/chat-chrome.test.ts && node --experimental-strip-types src/web/lib/chat-wallet.test.ts && node --experimental-strip-types src/web/lib/dm-contacts.test.ts && node --experimental-strip-types src/web/lib/amount.test.ts && node --experimental-strip-types src/web/lib/chat-defaults.test.ts && node --experimental-strip-types src/web/lib/sync-label.test.ts && node --experimental-strip-types src/web/lib/api.test.ts && node --experimental-strip-types src/web/i18n/index.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-opener": "^2.7.3",
-    "@tauri-apps/plugin-shell": "^2.6.0",
     "@types/qrcode": "^1.5.6",
     "jsqr": "^1.4.0",
     "lit": "^3.3.3",

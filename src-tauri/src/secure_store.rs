@@ -20,8 +20,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Version 3 = keychain-backed vault key. Version 2 = legacy PBKDF2 constant.
 const META_VERSION: u32 = 3;
@@ -52,12 +53,13 @@ struct VaultMeta {
     file_backed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct VaultPayload {
     mnemonic: String,
     wallet_pass: String,
 }
 
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct Session {
     mnemonic: Vec<String>,
     wallet_pass: String,
@@ -101,10 +103,22 @@ fn derive_key_pbkdf2(salt: &[u8]) -> [u8; 32] {
     out
 }
 
-fn keyring_account() -> String {
-    let root = crate::paths::wallet_data_root();
+pub fn keyring_account_for_root(root: &Path) -> String {
     let digest = Sha256::digest(root.to_string_lossy().as_bytes());
     format!("master_key:{}", hex::encode(&digest[..8]))
+}
+
+fn keyring_account() -> String {
+    keyring_account_for_root(&crate::paths::wallet_data_root())
+}
+
+/// Delete the vault master key from the OS keychain for a specific profile root.
+/// Leaves the legacy shared entry intact so other profiles remain readable.
+pub fn delete_vault_key_for_root(root: &Path) {
+    let account = keyring_account_for_root(root);
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) {
+        let _ = entry.delete_credential();
+    }
 }
 
 fn read_keyring_secret(account: &str) -> Option<[u8; 32]> {
@@ -235,15 +249,15 @@ fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
 }
 
 fn derive_key_for_read(salt: &[u8], meta: &VaultMeta) -> [u8; 32] {
-    if meta.keychain_backed {
-        if let Some(master) = read_keychain_master_key() {
-            return mix_master(&master, salt);
-        }
+    if meta.keychain_backed
+        && let Some(master) = read_keychain_master_key()
+    {
+        return mix_master(&master, salt);
     }
-    if meta.file_backed {
-        if let Some(master) = file_master_key() {
-            return mix_master(&master, salt);
-        }
+    if meta.file_backed
+        && let Some(master) = file_master_key()
+    {
+        return mix_master(&master, salt);
     }
     derive_key_pbkdf2(salt)
 }
@@ -303,7 +317,7 @@ fn read_meta() -> Result<Option<VaultMeta>> {
 fn write_meta(meta: &VaultMeta) -> Result<()> {
     ensure_vault_dir()?;
     let s = serde_json::to_string_pretty(meta)?;
-    fs::write(meta_path(), s).context("write vault meta")
+    crate::paths::write_atomic(&meta_path(), s.as_bytes(), true).context("write vault meta")
 }
 
 fn write_vault_files(mnemonic: &[String], wallet_pass: &str, overwrite: bool) -> Result<()> {
@@ -316,13 +330,14 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str, overwrite: bool) ->
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
     let (key, keychain_backed, file_backed) = derive_key_for_write(&salt)?;
+    let key = Zeroizing::new(key);
     let payload = VaultPayload {
         mnemonic: mnemonic.join(" "),
         wallet_pass: wallet_pass.to_string(),
     };
-    let plain = serde_json::to_vec(&payload)?;
+    let plain = Zeroizing::new(serde_json::to_vec(&payload)?);
     let sealed = seal(&key, &plain)?;
-    fs::write(data_path(), sealed).context("write vault.dat")?;
+    crate::paths::write_atomic(&data_path(), &sealed, true).context("write vault.dat")?;
     write_meta(&VaultMeta {
         version: META_VERSION,
         salt_hex: hex::encode(salt),
@@ -364,7 +379,7 @@ fn decrypt_payload() -> Result<VaultPayload> {
         return Err(anyhow!("Corrupt vault"));
     }
     let blob = fs::read(data_path()).context("read vault.dat")?;
-    let plain = open_seal(&key, &blob)?;
+    let plain = Zeroizing::new(open_seal(&key, &blob)?);
     serde_json::from_slice(&plain).context("parse vault payload")
 }
 
@@ -380,7 +395,7 @@ fn unlock_into_session() -> Result<()> {
             .split_whitespace()
             .map(|w| w.to_string())
             .collect(),
-        wallet_pass: payload.wallet_pass,
+        wallet_pass: payload.wallet_pass.clone(),
     });
     Ok(())
 }
@@ -495,9 +510,7 @@ pub fn wipe_secrets() -> Result<()> {
     // Also remove the keychain master key.
     // Only this profile's key. The legacy global entry stays so other
     // profiles that have not copied it yet can still open.
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_account()) {
-        let _ = entry.delete_credential();
-    }
+    delete_vault_key_for_root(&crate::paths::wallet_data_root());
     legacy_delete_all();
     Ok(())
 }

@@ -7,9 +7,11 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import {
   api,
+  formatInvokeError,
   type DaoProposalSummary,
   type DaoSummary,
 } from "../lib/api";
+import { isValidDrkAmount } from "../lib/amount";
 
 @customElement("dao-screen")
 export class DaoScreen extends LitElement {
@@ -21,10 +23,30 @@ export class DaoScreen extends LitElement {
   @state() private proposeDuration = "10";
   @state() private proposeTokenId = "";
   @state() private showProposeModal = false;
+  @state() private showCreateModal = false;
+  @state() private createName = "";
+  @state() private createGovTokenId = "DRK";
+  @state() private createProposerLimit = "1";
+  @state() private createQuorum = "10";
+  @state() private createEarlyExecQuorum = "";
+  @state() private createApprovalRatio = "0.5";
+  @state() private showImportModal = false;
+  @state() private importName = "";
+  @state() private importToml = "";
+  @state() private showFundModal = false;
+  @state() private fundDaoName = "";
+  @state() private fundAmount = "";
+  @state() private fundTokenId = "";
+  @state() private showExportModal = false;
+  @state() private exportDaoName = "";
+  @state() private exportRole = "voter";
+  @state() private exportedToml = "";
+  @state() private treasuryByDao: Record<string, string> = {};
   @state() private message = "";
   @state() private error = "";
   @state() private loading = false;
   @state() private votingProposal: string | null = null;
+  @state() private executingProposal: string | null = null;
 
   static styles = css`
     :host {
@@ -99,6 +121,47 @@ export class DaoScreen extends LitElement {
       display: flex;
       gap: 8px;
       margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .roles-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .role-chip {
+      font-size: var(--font-size-xs);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--color-steel-border);
+      color: var(--color-text-muted);
+    }
+    .role-chip.enabled {
+      border-color: var(--color-accent);
+      color: var(--color-accent-muted);
+    }
+    .treasury-box {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: var(--border-radius-md);
+      background: var(--color-elevated);
+      border: 1px solid var(--color-steel-border);
+      font-family: var(--font-family-mono, monospace);
+      font-size: var(--font-size-xs);
+      white-space: pre-wrap;
+      color: var(--color-text-body);
+    }
+    textarea,
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 6px;
+      padding: 10px 12px;
+      border-radius: var(--border-radius-md);
+      border: 1px solid var(--color-steel-border);
+      background: var(--color-elevated);
+      color: var(--color-text-header);
+      font-family: inherit;
     }
     button {
       padding: 8px 14px;
@@ -258,10 +321,14 @@ export class DaoScreen extends LitElement {
       this.daos = await api.listDaos();
       if (this.daos.length > 0 && !this.selectedDao) {
         this.selectedDao = this.daos[0].name;
+      }
+      if (this.selectedDao && this.daos.some((d) => d.name === this.selectedDao)) {
         await this.loadProposals(this.selectedDao);
+      } else {
+        this.proposals = [];
       }
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     } finally {
       this.loading = false;
     }
@@ -272,7 +339,126 @@ export class DaoScreen extends LitElement {
     try {
       this.proposals = await api.listProposals(daoName);
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
+    }
+  }
+
+  private async loadTreasury(daoName: string) {
+    this.error = "";
+    try {
+      const text = await api.daoTreasury(daoName);
+      this.treasuryByDao = {
+        ...this.treasuryByDao,
+        [daoName]: text.trim() || "Treasury is empty.",
+      };
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    }
+  }
+
+  private async createDao() {
+    const name = this.createName.trim();
+    const govTokenId = this.createGovTokenId.trim() || "DRK";
+    const ratio = Number(this.createApprovalRatio);
+    if (!name) {
+      this.error = "Enter a DAO name";
+      return;
+    }
+    if (!isValidDrkAmount(this.createProposerLimit) || !isValidDrkAmount(this.createQuorum)) {
+      this.error = "Proposer limit and quorum must be valid positive amounts";
+      return;
+    }
+    if (this.createEarlyExecQuorum.trim() && !isValidDrkAmount(this.createEarlyExecQuorum)) {
+      this.error = "Early execution quorum must be a valid positive amount";
+      return;
+    }
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) {
+      this.error = "Approval ratio must be between 0.01 and 1.0";
+      return;
+    }
+    this.loading = true;
+    this.error = "";
+    this.message = "";
+    try {
+      const created = await api.daoCreate({
+        name,
+        proposerLimit: this.createProposerLimit.trim(),
+        quorum: this.createQuorum.trim(),
+        earlyExecQuorum: this.createEarlyExecQuorum.trim(),
+        approvalRatio: ratio,
+        govTokenId,
+      });
+      this.message = `DAO created: ${created}`;
+      this.showCreateModal = false;
+      this.createName = "";
+      this.selectedDao = created;
+      await this.refreshDaos();
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async importDao() {
+    if (!this.importName.trim() || !this.importToml.trim()) {
+      this.error = "Provide a DAO name and role TOML";
+      return;
+    }
+    this.loading = true;
+    this.error = "";
+    this.message = "";
+    try {
+      const res = await api.daoImport(this.importName.trim(), this.importToml.trim());
+      this.message = `DAO imported: ${res}`;
+      this.showImportModal = false;
+      this.importName = "";
+      this.importToml = "";
+      await this.refreshDaos();
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async fundDao() {
+    if (!this.fundDaoName || !isValidDrkAmount(this.fundAmount)) {
+      this.error = "Enter a valid positive amount (up to 8 decimal places)";
+      return;
+    }
+    this.loading = true;
+    this.error = "";
+    this.message = "";
+    try {
+      const tx = await api.daoFund({
+        daoName: this.fundDaoName,
+        amount: this.fundAmount.trim(),
+        tokenId: this.fundTokenId.trim() || undefined,
+      });
+      this.message = `Treasury funded: ${tx}`;
+      this.showFundModal = false;
+      this.fundAmount = "";
+      this.fundTokenId = "";
+      await this.loadTreasury(this.fundDaoName);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async runExportRole() {
+    if (!this.exportDaoName) return;
+    this.loading = true;
+    this.error = "";
+    try {
+      this.exportedToml = await api.daoExportRole(this.exportDaoName, this.exportRole);
+    } catch (e: unknown) {
+      this.exportedToml = "";
+      this.error = formatInvokeError(e);
+    } finally {
+      this.loading = false;
     }
   }
 
@@ -287,9 +473,26 @@ export class DaoScreen extends LitElement {
         await this.loadProposals(this.selectedDao);
       }
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     } finally {
       this.votingProposal = null;
+    }
+  }
+
+  private async execProposal(bulla: string) {
+    this.executingProposal = bulla;
+    this.error = "";
+    this.message = "";
+    try {
+      const tx = await api.daoExecProposal(bulla);
+      this.message = `Proposal executed: ${tx}`;
+      if (this.selectedDao) {
+        await this.loadProposals(this.selectedDao);
+      }
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    } finally {
+      this.executingProposal = null;
     }
   }
 
@@ -298,13 +501,22 @@ export class DaoScreen extends LitElement {
       this.error = "Please fill in amount and recipient address";
       return;
     }
+    if (!isValidDrkAmount(this.proposeAmount)) {
+      this.error = "Enter a valid amount (up to 8 decimal places)";
+      return;
+    }
+    const duration = Number(this.proposeDuration);
+    if (!Number.isInteger(duration) || duration <= 0) {
+      this.error = "Duration must be a positive whole number of block windows";
+      return;
+    }
     this.loading = true;
     this.error = "";
     this.message = "";
     try {
       const tx = await api.daoProposeTransfer({
         daoName: this.selectedDao,
-        durationBlockwindows: Number(this.proposeDuration) || 10,
+        durationBlockwindows: duration,
         amount: this.proposeAmount.trim(),
         tokenId: this.proposeTokenId.trim() || undefined,
         recipientAddress: this.proposeRecipient.trim(),
@@ -315,7 +527,7 @@ export class DaoScreen extends LitElement {
       this.proposeRecipient = "";
       await this.loadProposals(this.selectedDao);
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     } finally {
       this.loading = false;
     }
@@ -325,9 +537,31 @@ export class DaoScreen extends LitElement {
     return html`
       <div class="header-row">
         <h2 class="screen-title">DAO</h2>
-        <button class="secondary" ?disabled=${this.loading} @click=${this.refreshDaos}>
-          ${this.loading ? "Refreshing…" : "Refresh DAOs"}
-        </button>
+        <div class="actions-row" style="margin-top: 0">
+          <button
+            class="small"
+            ?disabled=${this.loading}
+            @click=${() => {
+              this.error = "";
+              this.showCreateModal = true;
+            }}
+          >
+            Create DAO
+          </button>
+          <button
+            class="secondary small"
+            ?disabled=${this.loading}
+            @click=${() => {
+              this.error = "";
+              this.showImportModal = true;
+            }}
+          >
+            Import DAO
+          </button>
+          <button class="secondary small" ?disabled=${this.loading} @click=${this.refreshDaos}>
+            ${this.loading ? "Refreshing…" : "Refresh DAOs"}
+          </button>
+        </div>
       </div>
 
       ${this.message ? html`<div class="msg">${this.message}</div>` : null}
@@ -336,20 +570,25 @@ export class DaoScreen extends LitElement {
       ${this.daos.length === 0
         ? html`
             <div class="card empty">
-              <p>No DAOs imported in this wallet yet.</p>
+              <p>No DAOs in this wallet yet.</p>
               <p style="font-size: var(--font-size-xs)">
-                Import DAOs via DarkFi CLI (<code>drk dao list</code>) or participating in governance.
+                Create a new DAO or import a role TOML exported from another Nighthawk wallet or <code>drk</code>.
               </p>
             </div>
           `
         : this.daos.map((dao) => this.renderDaoCard(dao))}
 
       ${this.showProposeModal ? this.renderProposeModal() : null}
+      ${this.showCreateModal ? this.renderCreateModal() : null}
+      ${this.showImportModal ? this.renderImportModal() : null}
+      ${this.showFundModal ? this.renderFundModal() : null}
+      ${this.showExportModal ? this.renderExportModal() : null}
     `;
   }
 
   private renderDaoCard(dao: DaoSummary) {
     const isSelected = this.selectedDao === dao.name;
+    const treasury = this.treasuryByDao[dao.name];
     return html`
       <div class="card">
         <div class="dao-header">
@@ -376,6 +615,18 @@ export class DaoScreen extends LitElement {
           ></div>
         </div>
 
+        <div class="roles-row">
+          <span class="role-chip ${dao.canPropose ? "enabled" : ""}"
+            >${dao.canPropose ? "✓ Propose" : "✕ Propose"}</span
+          >
+          <span class="role-chip ${dao.canVote ? "enabled" : ""}"
+            >${dao.canVote ? "✓ Vote" : "✕ Vote"}</span
+          >
+          <span class="role-chip ${dao.canExec ? "enabled" : ""}"
+            >${dao.canExec ? "✓ Execute" : "✕ Execute"}</span
+          >
+        </div>
+
         <div class="actions-row">
           <button
             class="secondary small"
@@ -385,6 +636,8 @@ export class DaoScreen extends LitElement {
           </button>
           <button
             class="small"
+            ?disabled=${!dao.canPropose}
+            title=${dao.canPropose ? "Create a treasury transfer proposal" : "This wallet does not hold the proposer key"}
             @click=${() => {
               this.selectedDao = dao.name;
               this.showProposeModal = true;
@@ -392,18 +645,47 @@ export class DaoScreen extends LitElement {
           >
             Propose Transfer
           </button>
+          <button
+            class="secondary small"
+            @click=${() => {
+              this.fundDaoName = dao.name;
+              this.fundAmount = "";
+              this.fundTokenId = "";
+              this.showFundModal = true;
+            }}
+          >
+            Fund
+          </button>
+          <button
+            class="secondary small"
+            @click=${() => this.loadTreasury(dao.name)}
+          >
+            Treasury
+          </button>
+          <button
+            class="secondary small"
+            @click=${() => {
+              this.exportDaoName = dao.name;
+              this.exportRole = "voter";
+              this.exportedToml = "";
+              this.showExportModal = true;
+            }}
+          >
+            Export Role
+          </button>
         </div>
 
-        ${isSelected ? this.renderProposalsList() : null}
+        ${treasury ? html`<div class="treasury-box">${treasury}</div>` : null}
+        ${isSelected ? this.renderProposalsList(dao) : null}
       </div>
     `;
   }
 
-  private renderProposalsList() {
+  private renderProposalsList(dao: DaoSummary) {
     if (this.proposals.length === 0) {
       return html`
         <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--color-text-muted)">
-          No active proposals for ${this.selectedDao}.
+          No active proposals for ${dao.name}.
         </div>
       `;
     }
@@ -411,17 +693,18 @@ export class DaoScreen extends LitElement {
     return html`
       <div style="margin-top: 16px">
         <h4 style="margin: 0 0 8px; color: var(--color-text-header)">
-          ${this.selectedDao} Proposals (${this.proposals.length})
+          ${dao.name} Proposals (${this.proposals.length})
         </h4>
-        ${this.proposals.map((p) => this.renderProposal(p))}
+        ${this.proposals.map((p) => this.renderProposal(p, dao))}
       </div>
     `;
   }
 
-  private renderProposal(p: DaoProposalSummary) {
+  private renderProposal(p: DaoProposalSummary, dao: DaoSummary) {
     const statusClass = p.isExecuted ? "executed" : p.mintHeight > 0 ? "active" : "pending";
     const statusLabel = p.isExecuted ? "Executed" : p.mintHeight > 0 ? "Active" : "Pending";
     const isVoting = this.votingProposal === p.proposalBullaB58;
+    const isExecuting = this.executingProposal === p.proposalBullaB58;
 
     return html`
       <div class="proposal-card">
@@ -438,21 +721,204 @@ export class DaoScreen extends LitElement {
               <div class="actions-row">
                 <button
                   class="vote-yes small"
-                  ?disabled=${isVoting}
+                  ?disabled=${isVoting || !dao.canVote}
+                  title=${dao.canVote ? "Vote YES" : "This wallet does not hold the voter key"}
                   @click=${() => this.vote(p.proposalBullaB58, true)}
                 >
                   ${isVoting ? "Voting…" : "Vote YES"}
                 </button>
                 <button
                   class="vote-no small"
-                  ?disabled=${isVoting}
+                  ?disabled=${isVoting || !dao.canVote}
+                  title=${dao.canVote ? "Vote NO" : "This wallet does not hold the voter key"}
                   @click=${() => this.vote(p.proposalBullaB58, false)}
                 >
                   ${isVoting ? "Voting…" : "Vote NO"}
                 </button>
+                <button
+                  class="secondary small"
+                  ?disabled=${isExecuting || !dao.canExec}
+                  title=${dao.canExec ? "Execute approved proposal" : "This wallet does not hold the executor key"}
+                  @click=${() => this.execProposal(p.proposalBullaB58)}
+                >
+                  ${isExecuting ? "Executing…" : "Execute"}
+                </button>
               </div>
             `
           : null}
+      </div>
+    `;
+  }
+
+  private renderCreateModal() {
+    return html`
+      <div class="modal-overlay" @click=${(e: Event) => {
+        if (e.target === e.currentTarget) this.showCreateModal = false;
+      }}>
+        <div class="modal">
+          <h3>Create DAO</h3>
+          <label>DAO Name</label>
+          <input
+            placeholder="e.g. my-dao"
+            .value=${this.createName}
+            @input=${(e: Event) => (this.createName = (e.target as HTMLInputElement).value)}
+          />
+          <label>Governance Token ID (or DRK)</label>
+          <input
+            placeholder="DRK"
+            .value=${this.createGovTokenId}
+            @input=${(e: Event) => (this.createGovTokenId = (e.target as HTMLInputElement).value)}
+          />
+          <label>Proposer Minimum</label>
+          <input
+            placeholder="1"
+            .value=${this.createProposerLimit}
+            @input=${(e: Event) => (this.createProposerLimit = (e.target as HTMLInputElement).value)}
+          />
+          <label>Quorum</label>
+          <input
+            placeholder="10"
+            .value=${this.createQuorum}
+            @input=${(e: Event) => (this.createQuorum = (e.target as HTMLInputElement).value)}
+          />
+          <label>Early Execution Quorum (optional, defaults to Quorum)</label>
+          <input
+            placeholder="Optional"
+            .value=${this.createEarlyExecQuorum}
+            @input=${(e: Event) => (this.createEarlyExecQuorum = (e.target as HTMLInputElement).value)}
+          />
+          <label>Approval Ratio (0.01 to 1.0, e.g. 0.5 for 50%)</label>
+          <input
+            type="number"
+            step="0.05"
+            min="0.01"
+            max="1"
+            .value=${this.createApprovalRatio}
+            @input=${(e: Event) => (this.createApprovalRatio = (e.target as HTMLInputElement).value)}
+          />
+          <div class="modal-actions">
+            <button class="secondary" @click=${() => (this.showCreateModal = false)}>
+              Cancel
+            </button>
+            <button ?disabled=${this.loading} @click=${this.createDao}>
+              ${this.loading ? "Creating…" : "Create & Mint DAO"}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderImportModal() {
+    return html`
+      <div class="modal-overlay" @click=${(e: Event) => {
+        if (e.target === e.currentTarget) this.showImportModal = false;
+      }}>
+        <div class="modal">
+          <h3>Import DAO</h3>
+          <label>Local DAO Name</label>
+          <input
+            placeholder="e.g. community-dao"
+            .value=${this.importName}
+            @input=${(e: Event) => (this.importName = (e.target as HTMLInputElement).value)}
+          />
+          <label>DAO Role TOML</label>
+          <textarea
+            rows="6"
+            placeholder="Paste exported DAO TOML…"
+            .value=${this.importToml}
+            @input=${(e: Event) => (this.importToml = (e.target as HTMLTextAreaElement).value)}
+          ></textarea>
+          <div class="modal-actions">
+            <button class="secondary" @click=${() => (this.showImportModal = false)}>
+              Cancel
+            </button>
+            <button ?disabled=${this.loading} @click=${this.importDao}>
+              ${this.loading ? "Importing…" : "Import"}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderFundModal() {
+    return html`
+      <div class="modal-overlay" @click=${(e: Event) => {
+        if (e.target === e.currentTarget) this.showFundModal = false;
+      }}>
+        <div class="modal">
+          <h3>Fund DAO Treasury — ${this.fundDaoName}</h3>
+          <label>Amount</label>
+          <input
+            placeholder="e.g. 5.0"
+            .value=${this.fundAmount}
+            @input=${(e: Event) => (this.fundAmount = (e.target as HTMLInputElement).value)}
+          />
+          <label>Token ID (optional, empty for native DRK)</label>
+          <input
+            placeholder="Optional token ID"
+            .value=${this.fundTokenId}
+            @input=${(e: Event) => (this.fundTokenId = (e.target as HTMLInputElement).value)}
+          />
+          <div class="modal-actions">
+            <button class="secondary" @click=${() => (this.showFundModal = false)}>
+              Cancel
+            </button>
+            <button ?disabled=${this.loading} @click=${this.fundDao}>
+              ${this.loading ? "Funding…" : "Fund Treasury"}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderExportModal() {
+    return html`
+      <div class="modal-overlay" @click=${(e: Event) => {
+        if (e.target === e.currentTarget) this.showExportModal = false;
+      }}>
+        <div class="modal">
+          <h3>Export DAO Role — ${this.exportDaoName}</h3>
+          <label>Role</label>
+          <select
+            .value=${this.exportRole}
+            @change=${(e: Event) => (this.exportRole = (e.target as HTMLSelectElement).value)}
+          >
+            <option value="voter">Voter</option>
+            <option value="proposer">Proposer</option>
+            <option value="executor">Executor</option>
+            <option value="all">All keys</option>
+          </select>
+          ${this.exportedToml
+            ? html`
+                <label>Exported TOML (keep secret keys safe)</label>
+                <textarea rows="6" readonly .value=${this.exportedToml}></textarea>
+              `
+            : null}
+          <div class="modal-actions">
+            <button class="secondary" @click=${() => (this.showExportModal = false)}>
+              Close
+            </button>
+            ${this.exportedToml
+              ? html`
+                  <button
+                    class="secondary"
+                    @click=${() => {
+                      void navigator.clipboard.writeText(this.exportedToml);
+                      this.message = "Role TOML copied to clipboard";
+                    }}
+                  >
+                    Copy TOML
+                  </button>
+                `
+              : null}
+            <button ?disabled=${this.loading} @click=${this.runExportRole}>
+              ${this.loading ? "Exporting…" : "Export"}
+            </button>
+          </div>
+        </div>
       </div>
     `;
   }

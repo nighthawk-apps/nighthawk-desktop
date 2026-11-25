@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   api,
+  formatInvokeError,
   type Network,
   type Prefs,
   type WalletProfiles,
@@ -16,6 +17,11 @@ import {
   t,
   type LocaleCode,
 } from "../i18n";
+
+/** Module-level timer so seed clipboard auto-clear fires even if the user navigates away. */
+let seedClipboardClearTimer: number | undefined;
+const SEED_CLIPBOARD_CLEAR_MS = 60_000;
+const SEED_DISPLAY_TIMEOUT_MS = 60_000;
 
 @customElement("settings-screen")
 export class SettingsScreen extends LitElement {
@@ -33,6 +39,8 @@ export class SettingsScreen extends LitElement {
   @state() private renameLabel = "";
   @state() private appVersion = "";
   @state() private locale: LocaleCode = getLocale();
+  private backupHideTimer?: number;
+  private backupCopiedTimer?: number;
 
   static styles = css`
     :host {
@@ -97,6 +105,10 @@ export class SettingsScreen extends LitElement {
       background: var(--color-secondary-fill);
       color: var(--color-text-header);
     }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .words {
       font-size: var(--font-size-sm);
       word-break: break-word;
@@ -108,11 +120,46 @@ export class SettingsScreen extends LitElement {
     .err {
       color: var(--color-dangerous);
     }
+    .hint {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
     .row {
       display: flex;
       gap: 8px;
       align-items: center;
       flex-wrap: wrap;
+    }
+    .wallet-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .wallet-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-radius: var(--border-radius-md);
+      background: var(--color-elevated);
+      border: 1px solid var(--color-steel-border);
+    }
+    .wallet-item.active {
+      border-color: var(--color-accent);
+    }
+    .wallet-item-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .wallet-item-actions button {
+      margin: 0;
+      padding: 6px 10px;
+      font-size: var(--font-size-xs);
     }
   `;
 
@@ -131,9 +178,49 @@ export class SettingsScreen extends LitElement {
     }
   }
 
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.clearBackupDisplay();
+  }
+
+  private clearBackupDisplay() {
+    this.backup = [];
+    this.backupCopied = false;
+    if (this.backupHideTimer) {
+      window.clearTimeout(this.backupHideTimer);
+      this.backupHideTimer = undefined;
+    }
+    if (this.backupCopiedTimer) {
+      window.clearTimeout(this.backupCopiedTimer);
+      this.backupCopiedTimer = undefined;
+    }
+  }
+
+  private async copyBackupSeed() {
+    if (!this.backup.length) return;
+    const phrase = this.backup.join(" ");
+    try {
+      await navigator.clipboard.writeText(phrase);
+      this.backupCopied = true;
+      this.message = "Seed phrase copied — clipboard will auto-clear in 60s";
+      if (this.backupCopiedTimer) window.clearTimeout(this.backupCopiedTimer);
+      this.backupCopiedTimer = window.setTimeout(() => {
+        this.backupCopied = false;
+      }, 3000);
+      if (seedClipboardClearTimer) window.clearTimeout(seedClipboardClearTimer);
+      seedClipboardClearTimer = window.setTimeout(() => {
+        seedClipboardClearTimer = undefined;
+        void navigator.clipboard.writeText("").catch(() => undefined);
+      }, SEED_CLIPBOARD_CLEAR_MS);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    }
+  }
+
   private async save() {
     if (!this.prefs) return;
     this.error = "";
+    this.message = "";
     try {
       await api.setPrefs(this.prefs);
       this.prefs = await api.getPrefs();
@@ -142,21 +229,25 @@ export class SettingsScreen extends LitElement {
       this.dispatchEvent(
         new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
       );
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+      this.prefs = await api.getPrefs().catch(() => this.prefs);
     }
   }
 
   private async switchNetwork(n: Network) {
+    this.error = "";
+    this.message = "";
     try {
       await api.setNetwork(n);
       this.prefs = await api.getPrefs();
-      this.message = `Network set to ${n}. Restart if balances look stale.`;
+      this.message = `Network set to ${n}.`;
       this.dispatchEvent(
         new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
       );
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+      this.prefs = await api.getPrefs().catch(() => this.prefs);
     }
   }
 
@@ -168,25 +259,33 @@ export class SettingsScreen extends LitElement {
     ) {
       return;
     }
+    this.error = "";
     try {
       this.backup = await api.backupMnemonic();
-      this.message = "Seed shown — store safely";
-    } catch (e: any) {
-      this.error = String(e);
+      this.message = "Seed shown — auto-hides in 60s. Store safely.";
+      if (this.backupHideTimer) window.clearTimeout(this.backupHideTimer);
+      this.backupHideTimer = window.setTimeout(() => {
+        this.clearBackupDisplay();
+      }, SEED_DISPLAY_TIMEOUT_MS);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
   private async wipe() {
     if (!confirm("Wipe all wallet data on this device?")) return;
+    this.error = "";
     try {
+      this.clearBackupDisplay();
       await api.wipeWallet();
       location.reload();
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
   private async toggleArti() {
+    this.error = "";
     try {
       if (this.artiRunning) {
         await api.artiStop();
@@ -195,35 +294,38 @@ export class SettingsScreen extends LitElement {
       }
       this.artiRunning = await api.artiStatus();
       this.message = this.artiRunning ? "Arti Tor proxy started" : "Arti stopped";
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
   private async createWalletProfile() {
+    this.error = "";
     try {
       await api.walletsCreate(this.newWalletLabel || "New wallet");
       this.wallets = await api.walletsList();
       this.message =
         "New wallet profile created — complete onboarding / restore.";
       location.reload();
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
   private async switchWallet(id: string) {
+    this.error = "";
     try {
       await api.walletsSwitch(id);
       this.message = "Switched wallet — reloading…";
       location.reload();
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
   private async renameWallet() {
     if (!this.wallets) return;
+    this.error = "";
     const id = this.wallets.activeId;
     const label = this.renameLabel.trim();
     if (!label) {
@@ -235,21 +337,25 @@ export class SettingsScreen extends LitElement {
       this.wallets = await api.walletsList();
       this.renameLabel = "";
       this.message = "Wallet renamed";
-    } catch (e: any) {
-      this.error = String(e);
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
-  private async removeWallet() {
+  private async removeWallet(id: string, label: string) {
     if (!this.wallets) return;
-    const id = this.wallets.activeId;
+    this.error = "";
     if (id === "default") {
-      this.error = "Cannot remove the default wallet profile — use Wipe instead";
+      this.error = "Cannot remove the primary wallet profile — use Wipe wallet instead";
+      return;
+    }
+    if (id === this.wallets.activeId) {
+      this.error = "Switch to another wallet first to remove this one";
       return;
     }
     if (
       !confirm(
-        `Remove wallet profile "${id}"? This deletes that profile’s vault data.`,
+        `Remove wallet profile "${label}"? This permanently deletes that profile’s vault data.`,
       )
     ) {
       return;
@@ -257,10 +363,9 @@ export class SettingsScreen extends LitElement {
     try {
       await api.walletsRemove(id);
       this.wallets = await api.walletsList();
-      this.message = "Wallet profile removed — reloading…";
-      location.reload();
-    } catch (e: any) {
-      this.error = String(e);
+      this.message = `Removed wallet profile "${label}"`;
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -417,20 +522,51 @@ export class SettingsScreen extends LitElement {
         <h3>Wallets</h3>
         ${this.wallets
           ? html`
-              <select
-                .value=${this.wallets.activeId}
-                @change=${(e: Event) =>
-                  this.switchWallet((e.target as HTMLSelectElement).value)}
-              >
-                ${this.wallets.wallets.map(
-                  (w) =>
-                    html`<option value=${w.id}>
-                      ${w.label}${w.id === this.wallets!.activeId
-                        ? " (active)"
-                        : ""}
-                    </option>`,
-                )}
-              </select>
+              <div class="wallet-list">
+                ${this.wallets.wallets.map((w) => {
+                  const isActive = w.id === this.wallets!.activeId;
+                  const isDefault = w.id === "default";
+                  return html`
+                    <div class="wallet-item ${isActive ? "active" : ""}">
+                      <div>
+                        <strong>${w.label}</strong>
+                        ${isActive ? html` <span class="msg">(active)</span>` : null}
+                        ${isDefault
+                          ? html`<div class="hint">Primary profile (use Wipe wallet below to reset)</div>`
+                          : isActive
+                            ? html`<div class="hint">Switch to another wallet first to remove this one</div>`
+                            : null}
+                      </div>
+                      <div class="wallet-item-actions">
+                        ${!isActive
+                          ? html`
+                              <button
+                                class="secondary"
+                                @click=${() => this.switchWallet(w.id)}
+                              >
+                                Switch
+                              </button>
+                            `
+                          : null}
+                        ${!isDefault
+                          ? html`
+                              <button
+                                class="danger"
+                                ?disabled=${isActive}
+                                title=${isActive
+                                  ? "Switch to another wallet first to remove this one"
+                                  : `Remove ${w.label}`}
+                                @click=${() => this.removeWallet(w.id, w.label)}
+                              >
+                                Remove
+                              </button>
+                            `
+                          : null}
+                      </div>
+                    </div>
+                  `;
+                })}
+              </div>
             `
           : null}
         <div class="row">
@@ -452,9 +588,6 @@ export class SettingsScreen extends LitElement {
               (this.renameLabel = (e.target as HTMLInputElement).value)}
           />
           <button class="secondary" @click=${this.renameWallet}>Rename</button>
-          <button class="danger" @click=${this.removeWallet}>
-            Remove active
-          </button>
         </div>
       </div>
 
@@ -473,23 +606,21 @@ export class SettingsScreen extends LitElement {
           ? html`
               <div style="margin-top: 12px">
                 <p class="words">${this.backup.join(" ")}</p>
-                <button
-                  class="secondary"
-                  @click=${() => {
-                    navigator.clipboard.writeText(this.backup.join(" "));
-                    this.backupCopied = true;
-                    setTimeout(() => (this.backupCopied = false), 2000);
-                  }}
-                >
-                  ${this.backupCopied ? "Copied!" : "Copy seed phrase"}
-                </button>
+                <div class="row">
+                  <button class="secondary" @click=${this.copyBackupSeed}>
+                    ${this.backupCopied ? "Copied! (clears in 60s)" : "Copy seed phrase"}
+                  </button>
+                  <button class="secondary" @click=${this.clearBackupDisplay}>
+                    Hide seed
+                  </button>
+                </div>
               </div>
             `
           : null}
       </div>
       <div class="card">
         <h3>About</h3>
-        <p>Nighthawk Desktop ${this.appVersion || "3.1.19"} — DarkFi UniFFI + Lit + Tauri</p>
+        <p>Nighthawk Desktop ${this.appVersion || "3.1.20"} — DarkFi UniFFI + Lit + Tauri</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

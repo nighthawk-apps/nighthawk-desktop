@@ -94,6 +94,12 @@ pub fn load_prefs() -> Prefs {
     }
 }
 
+pub fn save_prefs(prefs: &Prefs) -> Result<()> {
+    let s = serde_json::to_string_pretty(prefs)?;
+    crate::paths::write_atomic(&prefs_path(), s.as_bytes(), true).context("write prefs")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,13 +115,4 @@ mod tests {
         .unwrap();
         assert!(!parsed.strict_omr_only);
     }
-}
-
-pub fn save_prefs(prefs: &Prefs) -> Result<()> {
-    if let Some(parent) = prefs_path().parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let s = serde_json::to_string_pretty(prefs)?;
-    fs::write(prefs_path(), s).context("write prefs")?;
-    Ok(())
 }

@@ -1,12 +1,12 @@
 /** Lightweight i18n for Nighthawk desktop (Lit). */
-import en from "./locales/en.json";
-import ja from "./locales/ja.json";
-import zh from "./locales/zh.json";
-import ko from "./locales/ko.json";
-import id from "./locales/id.json";
-import es from "./locales/es.json";
-import pt from "./locales/pt.json";
-import ar from "./locales/ar.json";
+import en from "./locales/en.json" with { type: "json" };
+import ja from "./locales/ja.json" with { type: "json" };
+import zh from "./locales/zh.json" with { type: "json" };
+import ko from "./locales/ko.json" with { type: "json" };
+import id from "./locales/id.json" with { type: "json" };
+import es from "./locales/es.json" with { type: "json" };
+import pt from "./locales/pt.json" with { type: "json" };
+import ar from "./locales/ar.json" with { type: "json" };
 
 export type LocaleCode = "en" | "ja" | "zh" | "ko" | "id" | "es" | "pt" | "ar";
 

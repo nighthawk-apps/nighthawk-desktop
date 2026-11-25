@@ -29,6 +29,17 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout Android wallet for darkfi-mobile-ffi
+        uses: actions/checkout@v4
+        with:
+          repository: nighthawk-apps/nighthawk-android-wallet
+          ref: nighthawk-dark
+          path: android-wallet
+          submodules: recursive
+      - name: Link the FFI crate where Cargo.toml expects it
+        run: ln -sfn "$GITHUB_WORKSPACE/android-wallet" "$(dirname "$GITHUB_WORKSPACE")/nighthawk-android-wallet"
       - run: bash -n scripts/fetch-xmrig.sh
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --no-deps -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 

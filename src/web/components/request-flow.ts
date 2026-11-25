@@ -1,7 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import QRCode from "qrcode";
-import { api } from "../lib/api";
+import { api, formatInvokeError } from "../lib/api";
 import {
   buildPaymentUri,
   MAX_PAYMENT_MEMO_BYTES,
@@ -72,7 +72,7 @@ export class RequestFlow extends LitElement {
       this.address = await api.walletAddress();
       await this.refreshQr();
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 

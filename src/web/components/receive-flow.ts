@@ -1,7 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import QRCode from "qrcode";
-import { api } from "../lib/api";
+import { api, formatInvokeError } from "../lib/api";
 
 @customElement("receive-flow")
 export class ReceiveFlow extends LitElement {
@@ -60,7 +60,7 @@ export class ReceiveFlow extends LitElement {
       this.address = await api.walletAddress();
       this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
@@ -79,7 +79,7 @@ export class ReceiveFlow extends LitElement {
       this.address = await api.generateAddress();
       this.qr = await QRCode.toDataURL(this.address, { margin: 1, width: 180 });
     } catch (e: unknown) {
-      this.error = String(e);
+      this.error = formatInvokeError(e);
     }
   }
 
