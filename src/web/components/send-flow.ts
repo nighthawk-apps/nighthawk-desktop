@@ -3,18 +3,13 @@ import { customElement, state } from "lit/decorators.js";
 import jsQR from "jsqr";
 import {
   api,
+  formatInvokeError,
   spendReady,
   type AddressBookEntry,
   type LightSyncState,
   type TokenBalance,
 } from "../lib/api";
-import {
-  evaluateSendBalance,
-  formatDrkAtomic,
-  isValidDrkAmount,
-  parseDrkAtomic,
-} from "../lib/amount";
-import { formatInvokeError } from "../lib/api";
+import { formatDrkAtomic } from "../lib/amount";
 import {
   applyRecipientPaste,
   MAX_PAYMENT_MEMO_BYTES,
@@ -29,6 +24,31 @@ import {
   type ChatReceipt,
   type ChatReceiptDetail,
 } from "../lib/chat-wallet";
+import {
+  validateFeeEstimate,
+  validateSendSubmission,
+  type SendValidationErrorCode,
+} from "../lib/transfer-validation";
+import { t } from "../i18n";
+
+function sendErrorText(code: SendValidationErrorCode): string {
+  switch (code) {
+    case "not_spend_ready":
+      return t("send.wait_error");
+    case "missing_recipient":
+      return t("wallet.recipient_required");
+    case "invalid_amount":
+      return t("send.invalid_amount");
+    case "insufficient_drk_amount_and_fee":
+      return t("send.err_not_enough_drk");
+    case "unknown_token":
+      return t("send.err_unknown_token");
+    case "insufficient_token":
+      return t("send.err_not_enough_token");
+    case "insufficient_drk_fee":
+      return t("send.err_not_enough_drk_fee");
+  }
+}
 
 @customElement("send-flow")
 export class SendFlow extends LitElement {
@@ -38,6 +58,7 @@ export class SendFlow extends LitElement {
   @state() private tokenId = "";
   @state() private tokens: TokenBalance[] = [];
   @state() private book: AddressBookEntry[] = [];
+  @state() private selectedContactId = "";
   @state() private fee: number | null = null;
   @state() private result = "";
   @state() private error = "";
@@ -45,10 +66,14 @@ export class SendFlow extends LitElement {
   @state() private saveLabel = "";
   @state() private scanHint = "";
   @state() private sync: LightSyncState | null = null;
+  @state() private localeTick = 0;
   private chatPayContext: ChatPayContext | null = null;
   private onShellSync = (e: Event) => {
     const snap = (e as CustomEvent<LightSyncState>).detail;
     if (snap) this.sync = snap;
+  };
+  private onLocale = () => {
+    this.localeTick++;
   };
 
   static styles = css`
@@ -78,6 +103,15 @@ export class SendFlow extends LitElement {
     }
     .row.tight {
       margin-top: 8px;
+      align-items: stretch;
+    }
+    .row.tight select {
+      margin-top: 0;
+      flex: 1;
+    }
+    .row.tight button.compact {
+      flex: 0 0 auto;
+      padding: 10px 12px;
     }
     button {
       flex: 1;
@@ -93,6 +127,10 @@ export class SendFlow extends LitElement {
     button.secondary {
       background: var(--color-secondary-fill);
       color: var(--color-text-header);
+    }
+    button.danger {
+      background: var(--color-dangerous-banner-bg);
+      color: var(--color-dangerous-banner-fg);
     }
     .msg {
       margin-top: 12px;
@@ -129,6 +167,7 @@ export class SendFlow extends LitElement {
 
   override async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     const staged = consumeChatPayContext();
     if (staged) {
       const parsed = applyRecipientPaste(staged.raw);
@@ -158,9 +197,10 @@ export class SendFlow extends LitElement {
     this.recipient = parsed.address;
     if (parsed.amount) this.amount = parsed.amount;
     if (parsed.memo) this.memo = truncateUtf8Bytes(parsed.memo);
-    this.scanHint = parsed.amount || parsed.memo
-      ? "Filled from payment URI"
-      : "Address filled";
+    this.scanHint =
+      parsed.amount || parsed.memo
+        ? t("send.filled_from_uri")
+        : t("send.address_filled");
   }
 
   private onRecipientInput(e: Event) {
@@ -191,20 +231,20 @@ export class SendFlow extends LitElement {
     input.value = "";
     if (!file) return;
     this.error = "";
-    this.scanHint = "Scanning…";
+    this.scanHint = t("send.scanning_qr");
     try {
       const bitmap = await createImageBitmap(file);
       const canvas = document.createElement("canvas");
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
       const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Canvas unavailable");
+      if (!ctx) throw new Error(t("send.canvas_unavailable"));
       ctx.drawImage(bitmap, 0, 0);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(img.data, img.width, img.height);
       if (!code?.data) {
         this.scanHint = "";
-        this.error = "No QR code found in image";
+        this.error = t("send.qr_not_found");
         return;
       }
       const parsed = applyRecipientPaste(code.data);
@@ -212,15 +252,15 @@ export class SendFlow extends LitElement {
         // Raw QR payload that isn't a drk: URI — use as address if plausible
         if (code.data.trim().length >= 16 && !/\s/.test(code.data.trim())) {
           this.recipient = code.data.trim();
-          this.scanHint = "Address filled from QR";
+          this.scanHint = t("send.address_filled_qr");
           return;
         }
-        this.error = "QR did not contain a payment address";
+        this.error = t("send.qr_no_address");
         this.scanHint = "";
         return;
       }
       this.applyParsed(parsed);
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.scanHint = "";
       this.error = formatInvokeError(err);
     }
@@ -228,6 +268,7 @@ export class SendFlow extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
     window.removeEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
@@ -240,24 +281,26 @@ export class SendFlow extends LitElement {
   }
 
   private async estimate() {
-    if (!spendReady(this.sync)) {
-      this.error =
-        "Wallet is still scanning. Send stays off until the Money tree is caught up to the tip.";
-      return;
-    }
     this.error = "";
-    if (!isValidDrkAmount(this.amount)) {
-      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+    const validated = validateFeeEstimate({
+      sync: this.sync,
+      recipient: this.recipient,
+      amount: this.amount,
+      memo: this.memo,
+      tokenId: this.tokenId,
+    });
+    if (!validated.ok) {
+      this.error = sendErrorText(validated.code);
       return;
     }
     try {
       this.fee = await api.estimateFee({
-        recipient: this.recipient.trim(),
-        amount: this.amount.trim(),
-        memo: this.memo || undefined,
-        tokenId: this.tokenId || undefined,
+        recipient: validated.recipient,
+        amount: validated.amount,
+        memo: validated.memo,
+        tokenId: validated.tokenId,
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
   }
@@ -295,69 +338,49 @@ export class SendFlow extends LitElement {
   private async send() {
     this.error = "";
     this.result = "";
-    if (!spendReady(this.sync)) {
-      this.error =
-        "Wallet is still scanning. Send stays off until the Money tree is caught up to the tip.";
-      return;
-    }
-    if (!isValidDrkAmount(this.amount)) {
-      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
-      return;
-    }
-    const amountAtomic = parseDrkAtomic(this.amount.trim());
-    if (amountAtomic === null) {
-      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
-      return;
-    }
+    let drkAtomic: number;
     try {
       this.tokens = await api.listTokenBalances();
-      const drkAtomic = BigInt(Math.trunc(await api.walletBalance()));
-      const tokenId = this.tokenId.trim();
-      const token = tokenId
-        ? this.tokens.find((t) => t.tokenId === tokenId)
-        : undefined;
-      const check = evaluateSendBalance({
-        amountAtomic,
-        tokenId,
-        tokenLabel: token?.displayLabel,
-        tokenAtomic:
-          tokenId && token ? BigInt(Math.trunc(token.balanceAtomic)) : tokenId ? null : null,
-        drkAtomic,
-        feeAtomic: BigInt(Math.trunc(this.fee ?? 5_000_000)),
-      });
-      if (!check.ok) {
-        this.error = check.reason;
-        return;
-      }
-    } catch (e: any) {
+      drkAtomic = await api.walletBalance();
+    } catch (e: unknown) {
       this.error = formatInvokeError(e);
       return;
     }
-    const parsedPreview = applyRecipientPaste(this.recipient);
-    const dest = (parsedPreview?.address ?? this.recipient).trim();
-    if (
-      !confirm(
-        `Send ${this.amount.trim()} to ${dest}? This cannot be undone.`,
-      )
-    ) {
+
+    const validated = validateSendSubmission({
+      sync: this.sync,
+      recipient: this.recipient,
+      amount: this.amount,
+      memo: this.memo,
+      tokenId: this.tokenId,
+      tokens: this.tokens,
+      drkBalanceAtomic: drkAtomic,
+      estimatedFeeAtomic: this.fee,
+    });
+    if (!validated.ok) {
+      this.error = sendErrorText(validated.code);
+      return;
+    }
+
+    const dest = validated.recipient;
+    if (!confirm(t("send.confirm_prompt", { amount: validated.amount, dest }))) {
       return;
     }
     this.busy = true;
     try {
-      // Allow pasting a drk: URI into recipient at send time
       const parsed = applyRecipientPaste(this.recipient);
       if (parsed && /^drk:/i.test(this.recipient.trim())) {
         this.applyParsed(parsed);
       }
       this.result = await api.sendDrk({
-        recipient: this.recipient.trim(),
-        amount: this.amount.trim(),
-        memo: this.memo || undefined,
-        tokenId: this.tokenId || undefined,
+        recipient: validated.recipient,
+        amount: validated.amount,
+        memo: validated.memo,
+        tokenId: validated.tokenId,
       });
       this.emitChatReceipt("broadcasted", dest, this.result);
       this.chatPayContext = null;
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.error = formatInvokeError(e);
       this.emitChatReceipt("failed", dest);
     } finally {
@@ -375,69 +398,98 @@ export class SendFlow extends LitElement {
         notes: "",
       });
       this.saveLabel = "";
-    } catch (e: any) {
+    } catch (e: unknown) {
+      this.error = formatInvokeError(e);
+    }
+  }
+
+  private async removeSelectedContact() {
+    if (!this.selectedContactId) return;
+    try {
+      this.book = await api.addressBookRemove(this.selectedContactId);
+      this.selectedContactId = "";
+    } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
   }
 
   render() {
+    void this.localeTick;
     return html`
-      <label>Token</label>
+      <label>${t("send.token_label")}</label>
       <select
         .value=${this.tokenId}
         @change=${(e: Event) =>
           (this.tokenId = (e.target as HTMLSelectElement).value)}
       >
-        <option value="">DRK (native)</option>
+        <option value="">${t("token.drk_native")}</option>
         ${this.tokens.map(
-          (t) => html`
-            <option value=${t.tokenId}>
-              ${t.displayLabel || t.tokenId.slice(0, 12)}…
-              (${formatDrkAtomic(t.balanceAtomic)})
+          (tok) => html`
+            <option value=${tok.tokenId}>
+              ${tok.displayLabel || tok.tokenId.slice(0, 12)}…
+              (${formatDrkAtomic(tok.balanceAtomic)})
             </option>
           `,
         )}
       </select>
-      <label>Amount</label>
+      <label>${t("wallet.amount")}</label>
       <input
         .value=${this.amount}
         placeholder="0.0"
         @input=${(e: Event) =>
           (this.amount = (e.target as HTMLInputElement).value)}
       />
-      <label>Address book</label>
-      <select
-        @change=${(e: Event) => {
-          const v = (e.target as HTMLSelectElement).value;
-          if (v) this.recipient = v;
-        }}
-      >
-        <option value="">Select contact…</option>
-        ${this.book.map(
-          (c) => html`<option value=${c.address}>${c.label}</option>`,
-        )}
-      </select>
-      <label>Recipient address or <code>drk:</code> URI</label>
+      <label>${t("wallet.address_book")}</label>
+      <div class="row tight">
+        <select
+          .value=${this.selectedContactId}
+          @change=${(e: Event) => {
+            const id = (e.target as HTMLSelectElement).value;
+            this.selectedContactId = id;
+            const entry = this.book.find((c) => c.id === id);
+            if (entry) this.recipient = entry.address;
+          }}
+        >
+          <option value="">${t("send.select_contact")}</option>
+          ${this.book.map(
+            (c) => html`<option value=${c.id}>${c.label}</option>`,
+          )}
+        </select>
+        ${this.selectedContactId
+          ? html`
+              <button
+                class="danger compact"
+                title=${t("send.remove_contact")}
+                @click=${this.removeSelectedContact}
+              >
+                ${t("common.remove")}
+              </button>
+            `
+          : null}
+      </div>
+      <label>${t("send.recipient_label")}</label>
       <input
         .value=${this.recipient}
-        placeholder="Paste address or drk:…?amount=&memo="
+        placeholder=${t("send.recipient_placeholder")}
         @input=${this.onRecipientInput}
         @paste=${this.onRecipientPaste}
       />
       <div class="row tight">
         <input
-          placeholder="Save as label"
+          placeholder=${t("send.save_label_placeholder")}
           .value=${this.saveLabel}
           @input=${(e: Event) =>
             (this.saveLabel = (e.target as HTMLInputElement).value)}
         />
-        <button class="secondary" @click=${this.saveContact}>Save</button>
+        <button class="secondary" @click=${this.saveContact}>
+          ${t("common.save")}
+        </button>
         <button
           class="secondary"
           @click=${() =>
             this.shadowRoot?.querySelector<HTMLInputElement>("#qr-file")?.click()}
         >
-          Scan QR image
+          ${t("send.scan_qr_image")}
         </button>
         <input
           id="qr-file"
@@ -447,7 +499,12 @@ export class SendFlow extends LitElement {
         />
       </div>
       ${this.scanHint ? html`<p class="hint">${this.scanHint}</p>` : null}
-      <label>Memo (optional, ${utf8ByteLength(this.memo)}/${MAX_PAYMENT_MEMO_BYTES} UTF-8 bytes)</label>
+      <label>
+        ${t("send.memo_label", {
+          used: utf8ByteLength(this.memo),
+          max: MAX_PAYMENT_MEMO_BYTES,
+        })}
+      </label>
       <textarea
         rows="2"
         .value=${this.memo}
@@ -458,30 +515,32 @@ export class SendFlow extends LitElement {
       ></textarea>
       ${this.fee !== null
         ? html`<p class="msg">
-            Scheduled fee (fixed): ${formatDrkAtomic(this.fee)} DRK
+            ${t("send.scheduled_fee", { fee: formatDrkAtomic(this.fee) })}
           </p>`
         : null}
       ${spendReady(this.sync)
         ? null
-        : html`<p class="msg">
-            Scanning — send stays off until the Money tree reaches the tip.
-          </p>`}
+        : html`<p class="msg">${t("send.scanning_wait")}</p>`}
       <div class="row">
         <button
           class="secondary"
           ?disabled=${this.busy || !spendReady(this.sync)}
           @click=${this.estimate}
         >
-          Check scheduled fee
+          ${t("wallet.estimate_fee")}
         </button>
         <button
           ?disabled=${this.busy || !spendReady(this.sync)}
           @click=${this.send}
         >
-          ${this.busy ? "Sending…" : "Send"}
+          ${this.busy ? t("send.sending") : t("common.send")}
         </button>
       </div>
-      ${this.result ? html`<p class="msg ok">Broadcasted (in lightwalletd mempool, awaiting confirmation): ${this.result}</p>` : null}
+      ${this.result
+        ? html`<p class="msg ok">
+            ${t("send.broadcasted", { tx: this.result })}
+          </p>`
+        : null}
       ${this.error ? html`<p class="msg err">${this.error}</p>` : null}
     `;
   }

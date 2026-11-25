@@ -1,14 +1,15 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { api, formatInvokeError, type MineStatus, type Prefs } from "../lib/api";
+import { t } from "../i18n";
 
 function mineErrorHint(log: string, err: string): string {
   const blob = `${err}\n${log}`.toLowerCase();
   if (blob.includes("wallet configuration is invalid")) {
-    return "Stratum rejected the payout address — unlock the wallet and confirm darkfid stratum is on the matching network.";
+    return t("mine.hint_invalid_wallet");
   }
   if (blob.includes("connection refused") || blob.includes("connect")) {
-    return "Cannot reach stratum — start darkfid with stratum enabled (testnet :18347 / mainnet :8347).";
+    return t("mine.hint_stratum_refused");
   }
   if (
     blob.includes("failed to start xmrig") ||
@@ -16,10 +17,10 @@ function mineErrorHint(log: string, err: string): string {
     blob.includes("not a known nighthawk build") ||
     blob.includes("no such file")
   ) {
-    return "Bundled xmrig sidecar is missing or failed SHA-256 verification. Reinstall Nighthawk Desktop or rebuild with an allowlisted xmrig binary.";
+    return t("mine.hint_xmrig_missing");
   }
   if (blob.includes("unlock wallet")) {
-    return "Unlock your wallet before mining so payouts go to your deposit address.";
+    return t("mine.hint_unlock_wallet");
   }
   return "";
 }
@@ -30,8 +31,12 @@ export class MineScreen extends LitElement {
   @state() private threads = 12;
   @state() private error = "";
   @state() private hint = "";
+  @state() private localeTick = 0;
   private timer?: number;
   private persistTimer?: number;
+  private onLocale = () => {
+    this.localeTick++;
+  };
 
   static styles = css`
     :host {
@@ -112,6 +117,7 @@ export class MineScreen extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     try {
       const prefs = await api.getPrefs();
       if (prefs.mineThreads) this.threads = prefs.mineThreads;
@@ -124,6 +130,7 @@ export class MineScreen extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
     if (this.timer) clearInterval(this.timer);
     if (this.persistTimer) clearTimeout(this.persistTimer);
   }
@@ -160,7 +167,7 @@ export class MineScreen extends LitElement {
           : "";
       this.dispatchEvent(
         new CustomEvent("mine-update", {
-          detail: this.status.running ? `Mining ${h}` : "",
+          detail: this.status.running ? t("mine.banner_mining", { rate: h }).trim() : "",
           bubbles: true,
           composed: true,
         }),
@@ -197,21 +204,20 @@ export class MineScreen extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     const s = this.status;
     const hs =
       s?.hashrateHs != null ? `${(s.hashrateHs / 1000).toFixed(2)} kH/s` : "—";
     return html`
-      <div class="hero">Mine DRK</div>
-      <p class="sub">
-        Mines directly to your wallet address via local darkfid stratum.
-        Requires darkfid with stratum enabled (testnet :18347 / mainnet :8347).
-      </p>
+      <div class="hero">${t("mine.title")}</div>
+      <p class="sub">${t("mine.subtitle")}</p>
       <div class="card">
         <div>
-          Status: <strong>${s?.running ? "Running" : "Stopped"}</strong>
+          ${t("mine.status_label")}
+          <strong>${s?.running ? t("mine.running") : t("mine.stopped")}</strong>
         </div>
-        <div>Hashrate: ${hs}</div>
-        <label>Threads: ${this.threads} (saved to prefs)</label>
+        <div>${t("mine.hashrate_label")} ${hs}</div>
+        <label>${t("mine.threads_label", { threads: this.threads })}</label>
         <input
           type="range"
           min="1"
@@ -219,13 +225,15 @@ export class MineScreen extends LitElement {
           .value=${String(this.threads)}
           @input=${this.onThreadsInput}
         />
-        <label>Stratum</label>
+        <label>${t("mine.stratum_label")}</label>
         <div class="addr">${s?.stratumUrl || "—"}</div>
-        <label>Payout address</label>
+        <label>${t("mine.payout_address")}</label>
         <div class="addr">${s?.address || "—"}</div>
         <div class="row">
-          <button class="start" @click=${this.start}>Start mining</button>
-          <button class="stop" @click=${this.stop}>Stop</button>
+          <button class="start" @click=${this.start}>
+            ${t("mine.start_mining")}
+          </button>
+          <button class="stop" @click=${this.stop}>${t("common.stop")}</button>
         </div>
         ${this.hint ? html`<p class="hint">${this.hint}</p>` : null}
       </div>

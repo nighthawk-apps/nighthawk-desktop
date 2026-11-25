@@ -3,7 +3,8 @@ import { customElement, state } from "lit/decorators.js";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, formatInvokeError, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { isValidDrkAmount } from "../lib/amount";
+import { prepareInlineChatRequest } from "../lib/chat-request";
+import { t } from "../i18n";
 import {
   bumpDmUnread,
   clearDmUnread,
@@ -35,7 +36,6 @@ import {
   type ChatReceiptDetail,
 } from "../lib/chat-wallet";
 import {
-  buildPaymentUri,
   MAX_PAYMENT_MEMO_BYTES,
   truncateUtf8Bytes,
   utf8ByteLength,
@@ -74,6 +74,10 @@ export class ChatScreen extends LitElement {
   @state() private requestAmount = "";
   @state() private requestMemo = "";
   @state() private requestError = "";
+  @state() private localeTick = 0;
+  private onLocale = () => {
+    this.localeTick++;
+  };
   /** Per-channel history (oldest → newest), like mobile channelMessages. */
   private channelMessages: Record<string, ChatMessage[]> = {};
   /** Per-channel unread counts, like mobile Channel.unreadCount. */
@@ -98,26 +102,26 @@ export class ChatScreen extends LitElement {
   private static phaseLabel(phase: string): string {
     switch (phase) {
       case "starting":
-        return "Starting…";
+        return t("chat.phase_starting");
       case "waiting_for_peers":
-        return "Finding peers…";
+        return t("chat.phase_waiting_for_peers");
       case "static_sync":
-        return "Static sync…";
+        return t("chat.phase_static_sync");
       case "syncing_dag":
-        return "Syncing DAG…";
+        return t("chat.phase_syncing_dag");
       case "loading_history":
-        return "Loading history…";
+        return t("chat.phase_loading_history");
       case "connected":
       case "running":
-        return "Connected";
+        return t("chat.phase_connected");
       case "stopping":
-        return "Stopping…";
+        return t("chat.phase_stopping");
       case "failed":
-        return "Failed";
+        return t("chat.phase_failed");
       case "not_running":
       case "stopped":
       default:
-        return "Stopped";
+        return t("chat.phase_stopped");
     }
   }
 
@@ -144,7 +148,7 @@ export class ChatScreen extends LitElement {
   private async deliverChat(channel: string, wire: string) {
     if (!this.chatReady()) {
       this.outbox.push({ channel, wire });
-      this.error = "Queued until DarkIRC connects";
+      this.error = t("chat.queued_until_connected");
       return;
     }
     await api.chatSend(channel, wire);
@@ -165,7 +169,7 @@ export class ChatScreen extends LitElement {
           return;
         }
       }
-      if (this.error === "Queued until DarkIRC connects") this.error = "";
+      if (this.error === t("chat.queued_until_connected")) this.error = "";
     } finally {
       this.flushingOutbox = false;
     }
@@ -220,13 +224,13 @@ export class ChatScreen extends LitElement {
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
     if (this.reconnectAttempts >= 5) {
-      this.pushSystem("Auto-reconnect gave up after 5 attempts — tap Retry.");
+      this.pushSystem(t("chat.reconnect_gave_up"));
       return;
     }
     const delay = Math.min(15_000, 2000 * 2 ** this.reconnectAttempts);
     this.reconnectAttempts += 1;
     this.pushSystem(
-      `Connection lost — retrying in ${Math.round(delay / 1000)}s…`,
+      t("chat.reconnect_retrying", { seconds: Math.round(delay / 1000) }),
     );
     this.reconnectTimer = window.setTimeout(async () => {
       this.reconnectTimer = undefined;
@@ -586,6 +590,7 @@ export class ChatScreen extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     this.status = await api.chatStatus();
     if (
       this.status !== "stopped" &&
@@ -693,7 +698,7 @@ export class ChatScreen extends LitElement {
 
   /** Failed → Retry; stopped / not running → Connect (one button, like mobile). */
   private get connectLabel(): string {
-    return this.status === "failed" ? "Retry" : "Connect";
+    return this.status === "failed" ? t("common.retry") : t("chat.connect");
   }
 
   private switchChannel(channel: string) {
@@ -736,6 +741,7 @@ export class ChatScreen extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
     window.removeEventListener(CHAT_RECEIPT_EVENT, this.onChatReceipt);
     this.unlisten?.();
     this.stopStatusPoll();
@@ -759,17 +765,19 @@ export class ChatScreen extends LitElement {
       case "allowed":
         if (uri) {
           queueFud(uri);
-          this.showToast(`Queued ${uri.fileName ?? uri.infoHash}. The file is not downloaded.`);
+          this.showToast(
+            t("chat.fud_queued", { name: uri.fileName ?? uri.infoHash }),
+          );
         }
         break;
       case "disabled":
-        this.showToast("File offers are off. Turn them on in Settings.");
+        this.showToast(t("chat.fud_disabled"));
         break;
       case "needsPrivateTransport":
-        this.showToast("File offers need Tor. Clearnet is rejected.");
+        this.showToast(t("chat.fud_needs_tor"));
         break;
       case "invalid":
-        this.showToast("That file offer is not a valid fud:// link.");
+        this.showToast(t("chat.fud_invalid"));
         break;
     }
   }
@@ -778,7 +786,7 @@ export class ChatScreen extends LitElement {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text);
     }
-    this.showToast("Message copied to clipboard");
+    this.showToast(t("chat.copied_toast"));
   }
 
   private renderChatBody(text: string) {
@@ -804,9 +812,7 @@ export class ChatScreen extends LitElement {
   private async onChatLink(e: Event, url: string) {
     if (!isClearnetHttp(url)) return;
     e.preventDefault();
-    const open = window.confirm(
-      "This http(s) link leaves Nym/Tor and can reveal your IP. Open it in the system browser?",
-    );
+    const open = window.confirm(t("chat.confirm_clearnet_link"));
     if (open) {
       try {
         await openUrl(url);
@@ -858,7 +864,7 @@ export class ChatScreen extends LitElement {
       await this.deliverChat(targetChannel, wireBody);
     } catch (e: unknown) {
       this.pushSystem(
-        `Payment receipt saved locally (chat relay unavailable: ${formatInvokeError(e)})`,
+        t("chat.receipt_saved_locally", { error: formatInvokeError(e) }),
         targetChannel,
       );
     }
@@ -872,23 +878,22 @@ export class ChatScreen extends LitElement {
   }
 
   private async submitInlineRequest() {
-    const amt = this.requestAmount.trim();
-    if (amt && !isValidDrkAmount(amt)) {
-      this.requestError = "Enter a valid DRK amount (up to 8 decimal places)";
-      return;
-    }
     this.requestError = "";
     try {
       const address = (await api.walletAddress()).trim();
-      if (!address) {
-        this.requestError = "Wallet address is not ready yet.";
+      const prepared = prepareInlineChatRequest({
+        address,
+        amount: this.requestAmount,
+        memo: this.requestMemo,
+      });
+      if (!prepared.ok) {
+        this.requestError =
+          prepared.code === "invalid_amount"
+            ? t("send.invalid_amount")
+            : t("chat.wallet_address_not_ready");
         return;
       }
-      this.draft = buildPaymentUri(
-        address,
-        amt || undefined,
-        this.requestMemo.trim() || undefined,
-      );
+      this.draft = prepared.uri;
       this.showRequestModal = false;
       await this.send();
     } catch (e: unknown) {
@@ -918,18 +923,13 @@ export class ChatScreen extends LitElement {
   }
 
   private async genDmKeys() {
-    if (
-      this.dmKeys &&
-      !window.confirm(
-        "Rotate your DM keypair? Existing contacts will need your new public key to exchange encrypted DMs.",
-      )
-    ) {
+    if (this.dmKeys && !window.confirm(t("chat.confirm_rotate_dm"))) {
       return;
     }
     try {
       this.dmKeys = await api.dmGenerateKeypair();
       this.error = "";
-      this.showToast(this.dmKeys ? "DM keypair ready" : "");
+      this.showToast(this.dmKeys ? t("chat.dm_keys_ready") : "");
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
@@ -990,7 +990,7 @@ export class ChatScreen extends LitElement {
   private async saveContact() {
     const peerPk = this.peerPublic.trim();
     if (!peerPk) {
-      this.error = "Enter peer public key first";
+      this.error = t("chat.enter_peer_key");
       return;
     }
     try {
@@ -1000,7 +1000,7 @@ export class ChatScreen extends LitElement {
       );
       this.dmContactLabel = "";
       this.error = "";
-      this.showToast("DM contact saved");
+      this.showToast(t("chat.dm_contact_saved"));
       const saved = this.dmContacts.find((c) => c.publicB58 === peerPk);
       if (saved) {
         await this.selectContact(saved);
@@ -1195,12 +1195,12 @@ export class ChatScreen extends LitElement {
       const body = text;
       const displayBody = text;
       if (this.dmMode && this.channel.trim().startsWith("#")) {
-        this.error = "Select or save a DM contact first — public #channels are not encrypted";
+        this.error = t("chat.dm_select_contact_first");
         return;
       }
       if (threadIsEncrypted(this.dmMode, this.channel)) {
         if (!this.dmKeys || !this.peerPublic.trim()) {
-          this.error = "Generate DM keys and set peer public key first";
+          this.error = t("chat.dm_generate_keys_first");
           return;
         }
       }
@@ -1230,7 +1230,7 @@ export class ChatScreen extends LitElement {
 
   private openNewDm() {
     this.dmMode = true;
-    this.showToast("New conversation — paste a peer key or pick a contact");
+    this.showToast(t("chat.new_conversation_toast"));
   }
 
   private openRequest() {
@@ -1245,7 +1245,7 @@ export class ChatScreen extends LitElement {
 
   private openNetworkInfo() {
     this.showToast(
-      `Network: ${ChatScreen.phaseLabel(this.status)}${this.nick ? ` · @${this.nick}` : ""}`,
+      `${t("chat.network_toast", { status: ChatScreen.phaseLabel(this.status) })}${this.nick ? ` · @${this.nick}` : ""}`,
     );
   }
 
@@ -1259,6 +1259,7 @@ export class ChatScreen extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     return html`
       <div class="top">
         <select
@@ -1273,13 +1274,13 @@ export class ChatScreen extends LitElement {
           })}
         </select>
         <button class="primary" @click=${this.start}>${this.connectLabel}</button>
-        <button @click=${this.stop}>Stop</button>
+        <button @click=${this.stop}>${t("common.stop")}</button>
         <span
           class="conn-status ${ChatScreen.phaseClass(this.status)}"
           title=${this.status}
         >
           ${ChatScreen.phaseLabel(this.status)}
-          · ${threadIsEncrypted(this.dmMode, this.channel) ? "Direct · E2E" : "Public channel"}
+          · ${threadIsEncrypted(this.dmMode, this.channel) ? t("chat.direct_e2e") : t("chat.public_channel")}
         </span>
         <label>
           <input
@@ -1288,40 +1289,40 @@ export class ChatScreen extends LitElement {
             @change=${(e: Event) =>
               (this.dmMode = (e.target as HTMLInputElement).checked)}
           />
-          E2E DM
+          ${t("chat.e2e_dm")}
         </label>
         ${this.nick
-          ? html`<span class="nick-chip" title="Current nick">@${this.nick}</span>`
+          ? html`<span class="nick-chip" title=${t("chat.current_nick")}>@${this.nick}</span>`
           : null}
-        <div class="chrome-actions" role="toolbar" aria-label="Chat actions">
+        <div class="chrome-actions" role="toolbar" aria-label=${t("chat.actions_aria")}>
           <button
             class="icon"
-            title="New conversation"
-            aria-label="New conversation"
+            title=${t("chat.new_conversation")}
+            aria-label=${t("chat.new_conversation")}
             @click=${this.openNewDm}
           >
             +
           </button>
           <button
             class="icon"
-            title="Request"
-            aria-label="Request"
+            title=${t("nav.request")}
+            aria-label=${t("nav.request")}
             @click=${this.openRequest}
           >
             ⎘
           </button>
           <button
             class="icon"
-            title="Network"
-            aria-label="Network"
+            title=${t("network.label")}
+            aria-label=${t("network.label")}
             @click=${this.openNetworkInfo}
           >
             ℹ
           </button>
           <button
             class="icon"
-            title="Chat Settings"
-            aria-label="Chat Settings"
+            title=${t("chat.settings")}
+            aria-label=${t("chat.settings")}
             @click=${this.openChatSettings}
           >
             ⚙
@@ -1332,16 +1333,16 @@ export class ChatScreen extends LitElement {
         ? html`
             <div class="dm">
               <button class="primary" @click=${this.genDmKeys}>
-                ${this.dmKeys ? "Rotate DM keys" : "Generate DM keys"}
+                ${this.dmKeys ? t("chat.rotate_dm_keys") : t("chat.generate_dm_keys")}
               </button>
               ${this.dmKeys
                 ? html`<p>
-                    Your public key:<br /><code>${this.dmKeys.publicB58}</code>
+                    ${t("chat.your_public_key")}<br /><code>${this.dmKeys.publicB58}</code>
                   </p>`
                 : null}
               <input
                 style="width:100%;margin-top:8px;box-sizing:border-box"
-                placeholder="Peer public key (base58)"
+                placeholder=${t("chat.peer_public_placeholder")}
                 .value=${this.peerPublic}
                 @input=${(e: Event) =>
                   (this.peerPublic = (e.target as HTMLInputElement).value)}
@@ -1349,7 +1350,7 @@ export class ChatScreen extends LitElement {
               <div class="contact" style="margin-top:8px">
                 <input
                   style="flex:1"
-                  placeholder="Contact label"
+                  placeholder=${t("chat.contact_label_placeholder")}
                   .value=${this.dmContactLabel}
                   @input=${(e: Event) =>
                     (this.dmContactLabel = (
@@ -1357,7 +1358,7 @@ export class ChatScreen extends LitElement {
                     ).value)}
                 />
                 <button class="primary" @click=${this.saveContact}>
-                  Save contact
+                  ${t("chat.save_contact")}
                 </button>
               </div>
               ${this.dmContacts.length
@@ -1383,14 +1384,14 @@ export class ChatScreen extends LitElement {
                               >${c.publicB58.slice(0, 10)}…</code
                             >
                             <button @click=${() => this.deleteContact(c.id)}>
-                              Remove
+                              ${t("common.remove")}
                             </button>
                           </div>
                         `,
                       )}
                     </div>
                   `
-                : html`<p class="status">No DM contacts yet</p>`}
+                : html`<p class="status">${t("chat.no_dm_contacts")}</p>`}
               ${this.decryptedHint
                 ? html`<p class="status">${this.decryptedHint}</p>`
                 : null}
@@ -1414,7 +1415,7 @@ export class ChatScreen extends LitElement {
                 )
                   ? "encrypted"
                   : ""}"
-                title="Click, long press, or right-click to copy"
+                title=${t("chat.copy_hint")}
                 @contextmenu=${(e: MouseEvent) => {
                   e.preventDefault();
                   this.copyMessage(m.message);
@@ -1433,14 +1434,14 @@ export class ChatScreen extends LitElement {
                         this.queueOffer(m.message);
                       }}
                     >
-                      Queue file offer
+                      ${t("chat.queue_file_offer")}
                     </button>`
                   : null}
                 ${(() => {
                   const invoice = findInvoice(m.message);
                   if (!invoice) return null;
                   return html`<div class="pay-card">
-                    <div class="pay-title">Payment request${invoice.amount ? html` · ${invoice.amount} DRK` : ""}</div>
+                    <div class="pay-title">${t("chat.payment_request")}${invoice.amount ? html` · ${invoice.amount} DRK` : ""}</div>
                     ${invoice.memo ? html`<div class="status">${invoice.memo}</div>` : null}
                     <button
                       class="primary"
@@ -1449,7 +1450,7 @@ export class ChatScreen extends LitElement {
                         this.payInvoice(invoice.raw);
                       }}
                     >
-                      Pay
+                      ${t("chat.pay")}
                     </button>
                   </div>`;
                 })()}
@@ -1457,7 +1458,7 @@ export class ChatScreen extends LitElement {
                   const receipt = parseReceipt(m.message);
                   if (!receipt) return null;
                   return html`<div class="pay-card">
-                    <div class="pay-title">Payment ${receipt.phase} · ${receipt.amount} DRK</div>
+                    <div class="pay-title">${t("chat.payment_status", { phase: receipt.phase, amount: receipt.amount })}</div>
                     ${receipt.txId ? html`<div class="pay-tx">${receipt.txId}</div>` : null}
                   </div>`;
                 })()}
@@ -1472,15 +1473,15 @@ export class ChatScreen extends LitElement {
       <div class="composer">
         <input
           placeholder=${threadIsEncrypted(this.dmMode, this.channel)
-            ? "Encrypted message…"
-            : "Message or /command…"}
+            ? t("chat.composer_encrypted")
+            : t("chat.composer_public")}
           .value=${this.draft}
           @keydown=${(e: KeyboardEvent) => e.key === "Enter" && this.send()}
           @input=${(e: Event) =>
             (this.draft = (e.target as HTMLInputElement).value)}
         />
-        <button @click=${() => this.openInlineRequest()}>Request</button>
-        <button class="primary" @click=${this.send}>Send</button>
+        <button @click=${() => this.openInlineRequest()}>${t("nav.request")}</button>
+        <button class="primary" @click=${this.send}>${t("common.send")}</button>
       </div>
       ${this.error ? html`<p class="err">${this.error}</p>` : null}
       ${this.showRequestModal
@@ -1492,22 +1493,24 @@ export class ChatScreen extends LitElement {
               }}
             >
               <div class="req-modal">
-                <h3>Post Payment Request</h3>
-                <label>Amount (DRK, optional)</label>
+                <h3>${t("chat.modal_request_title")}</h3>
+                <label>${t("chat.modal_amount_label")}</label>
                 <input
-                  placeholder="e.g. 1.5"
+                  placeholder=${t("chat.modal_amount_placeholder")}
                   .value=${this.requestAmount}
                   @keydown=${(e: KeyboardEvent) =>
                     e.key === "Enter" && this.submitInlineRequest()}
                   @input=${(e: Event) =>
                     (this.requestAmount = (e.target as HTMLInputElement).value)}
                 />
-                <label
-                  >Memo (optional, ${utf8ByteLength(this.requestMemo)}/${MAX_PAYMENT_MEMO_BYTES}
-                  UTF-8 bytes)</label
-                >
+                <label>
+                  ${t("send.memo_label", {
+                    used: utf8ByteLength(this.requestMemo),
+                    max: MAX_PAYMENT_MEMO_BYTES,
+                  })}
+                </label>
                 <input
-                  placeholder="Optional note"
+                  placeholder=${t("chat.modal_memo_placeholder")}
                   .value=${this.requestMemo}
                   @keydown=${(e: KeyboardEvent) =>
                     e.key === "Enter" && this.submitInlineRequest()}
@@ -1521,10 +1524,10 @@ export class ChatScreen extends LitElement {
                   : null}
                 <div class="req-modal-actions">
                   <button @click=${() => (this.showRequestModal = false)}>
-                    Cancel
+                    ${t("common.cancel")}
                   </button>
                   <button class="primary" @click=${this.submitInlineRequest}>
-                    Post Request
+                    ${t("chat.modal_post_request")}
                   </button>
                 </div>
               </div>

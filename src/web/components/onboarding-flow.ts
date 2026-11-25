@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { api, formatInvokeError, type Network } from "../lib/api";
+import { t } from "../i18n";
 
 @customElement("onboarding-flow")
 export class OnboardingFlow extends LitElement {
@@ -142,7 +143,7 @@ export class OnboardingFlow extends LitElement {
         .split(/\s+/)
         .filter(Boolean);
       if (this.mnemonic.length < 12) {
-        this.error = "Enter a full seed phrase";
+        this.error = t("onboarding.enter_full_seed");
         return;
       }
     }
@@ -175,59 +176,64 @@ export class OnboardingFlow extends LitElement {
 
   render() {
     if (this.checkingExisting) {
-      return html`<div class="card"><h1>Nighthawk</h1><p>Opening wallet…</p></div>`;
+      return html`<div class="card">
+        <h1>${t("app.name")}</h1>
+        <p>${t("onboarding.opening_wallet")}</p>
+      </div>`;
     }
     return html`
       <div class="card">
         ${this.step === "welcome"
           ? html`
-              <h1>Nighthawk</h1>
-              <p>Private DarkFi wallet for desktop — chat, transfer, and mine.</p>
-              <label>Network</label>
+              <h1>${t("app.name")}</h1>
+              <p>${t("onboarding.tagline")}</p>
+              <label>${t("network.label")}</label>
               <select
                 .value=${this.network}
                 @change=${(e: Event) =>
                   (this.network = (e.target as HTMLSelectElement).value as Network)}
               >
-                <option value="testnet">Testnet 0.3</option>
-                <option value="mainnet">Mainnet</option>
+                <option value="testnet">${t("onboarding.testnet_label")}</option>
+                <option value="mainnet">${t("network.mainnet")}</option>
               </select>
               <div class="actions">
                 <button class="primary" ?disabled=${this.busy} @click=${this.startCreate}>
-                  Create new wallet
+                  ${t("wallet.create")}
                 </button>
                 <button class="secondary" @click=${this.startRestore}>
-                  Restore from seed
+                  ${t("onboarding.restore_from_seed")}
                 </button>
               </div>
             `
           : null}
         ${this.step === "create"
           ? html`
-              <h1>Backup seed</h1>
-              <p>Write these 22 words down. They restore your wallet.</p>
+              <h1>${t("wallet.backup_seed")}</h1>
+              <p>${t("onboarding.backup_hint")}</p>
               <div class="words">
                 ${this.mnemonic.map((w, i) => html`<div>${i + 1}. ${w}</div>`)}
               </div>
               <div class="actions">
                 <button class="primary" ?disabled=${this.busy} @click=${this.finish}>
-                  ${this.busy ? "Creating…" : "Finish"}
+                  ${this.busy ? t("common.creating") : t("common.finish")}
                 </button>
-                <button class="secondary" @click=${() => (this.step = "welcome")}>Back</button>
+                <button class="secondary" @click=${() => (this.step = "welcome")}>
+                  ${t("common.back")}
+                </button>
               </div>
             `
           : null}
         ${this.step === "restore"
           ? html`
-              <h1>Restore</h1>
+              <h1>${t("onboarding.restore_title")}</h1>
               <textarea
                 rows="5"
-                placeholder="word1 word2 …"
+                placeholder=${t("onboarding.seed_placeholder")}
                 .value=${this.restoreText}
                 @input=${(e: Event) =>
                   (this.restoreText = (e.target as HTMLTextAreaElement).value)}
               ></textarea>
-              <label>Birthday height (optional)</label>
+              <label>${t("wallet.birthday")}</label>
               <input
                 type="number"
                 .value=${String(this.birthday)}
@@ -236,9 +242,11 @@ export class OnboardingFlow extends LitElement {
               />
               <div class="actions">
                 <button class="primary" ?disabled=${this.busy} @click=${this.finish}>
-                  ${this.busy ? "Restoring…" : "Restore wallet"}
+                  ${this.busy ? t("onboarding.restoring") : t("onboarding.restore_wallet")}
                 </button>
-                <button class="secondary" @click=${() => (this.step = "welcome")}>Back</button>
+                <button class="secondary" @click=${() => (this.step = "welcome")}>
+                  ${t("common.back")}
+                </button>
               </div>
             `
           : null}

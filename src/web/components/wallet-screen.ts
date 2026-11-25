@@ -17,6 +17,7 @@ import {
   formatLightSyncMethod,
   isLightSyncLive,
 } from "../lib/sync-label";
+import { t } from "../i18n";
 
 @customElement("wallet-screen")
 export class WalletScreen extends LitElement {
@@ -41,7 +42,11 @@ export class WalletScreen extends LitElement {
   @state() private mintTargetTokenId = "";
   @state() private mintAmount = "";
   @state() private mintRecipient = "";
+  @state() private localeTick = 0;
   private unlistenReorg?: UnlistenFn;
+  private onLocale = () => {
+    this.localeTick++;
+  };
   private onShellSync = (e: Event) => {
     const snap = (e as CustomEvent<LightSyncState>).detail;
     if (!snap) return;
@@ -263,6 +268,7 @@ export class WalletScreen extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     this.unlistenReorg = await api.onReorg((e) => {
       this.reorgMsg = e.summaryMessage;
       this.reorgHeight = e.rewoundTo;
@@ -274,6 +280,7 @@ export class WalletScreen extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unlistenReorg?.();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
     window.removeEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
@@ -398,7 +405,7 @@ export class WalletScreen extends LitElement {
     this.tokenBusy = true;
     try {
       const id = await api.tokenGenerate(this.newTokenAlias.trim() || undefined);
-      this.tokenMessage = `Generated token authority: ${id}`;
+      this.tokenMessage = t("wallet.token_generated", { id });
       this.newTokenAlias = "";
       this.showGenerateToken = false;
       this.mintAuthorities = await api.listMintAuthorities().catch(() => []);
@@ -412,12 +419,12 @@ export class WalletScreen extends LitElement {
   private async mintToken() {
     if (!this.mintTargetTokenId) return;
     if (!isValidDrkAmount(this.mintAmount)) {
-      this.error = "Enter a valid mint amount (up to 8 decimal places)";
+      this.error = t("wallet.invalid_mint_amount");
       return;
     }
     const recipient = (this.mintRecipient || this.address).trim();
     if (!recipient) {
-      this.error = "Recipient address is required";
+      this.error = t("wallet.recipient_required");
       return;
     }
     this.error = "";
@@ -429,7 +436,7 @@ export class WalletScreen extends LitElement {
         amount: this.mintAmount.trim(),
         recipientAddress: recipient,
       });
-      this.tokenMessage = `Minted token (tx: ${tx})`;
+      this.tokenMessage = t("wallet.token_minted", { tx });
       this.mintTargetTokenId = "";
       this.mintAmount = "";
       await this.reload();
@@ -441,11 +448,7 @@ export class WalletScreen extends LitElement {
   }
 
   private async freezeToken(tokenId: string, label: string) {
-    if (
-      !confirm(
-        `Permanently freeze minting for "${label}"? No additional tokens can ever be minted after freezing.`,
-      )
-    ) {
+    if (!confirm(t("wallet.confirm_freeze", { label }))) {
       return;
     }
     this.error = "";
@@ -453,7 +456,7 @@ export class WalletScreen extends LitElement {
     this.tokenBusy = true;
     try {
       const tx = await api.tokenFreeze(tokenId);
-      this.tokenMessage = `Token frozen (tx: ${tx})`;
+      this.tokenMessage = t("wallet.token_frozen", { tx });
       await this.reload();
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
@@ -463,6 +466,7 @@ export class WalletScreen extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     const drk = formatDrkAtomic(this.balance);
     const snap = this.syncDetail;
     const pct = snap ? this.progressPct(snap) : 0;
@@ -482,10 +486,8 @@ export class WalletScreen extends LitElement {
               <div class="bar"><span style="width:${pct}%"></span></div>
               <div class="sub" style="margin:0">
                 ${snap.statusMessage || snap.syncTypeMessage || "—"}
-                ${snap.omrAvailable ? " · OMR available" : " · OMR unavailable"}
-                ${spendReady(snap)
-                  ? ""
-                  : " · Send stays off until the Money tree reaches the tip"}
+                · ${snap.omrAvailable ? t("wallet.omr_available") : t("wallet.omr_unavailable")}
+                ${spendReady(snap) ? "" : ` · ${t("wallet.send_wait_short")}`}
               </div>
               ${snap.fallbackUserMessage
                 ? html`<div class="warn" style="margin-top:8px;margin-bottom:0">
@@ -494,50 +496,50 @@ export class WalletScreen extends LitElement {
                 : null}
               ${snap.protoVersionMismatch
                 ? html`<div class="warn" style="margin-top:8px;margin-bottom:0;color:#f39c12">
-                    ⚠️ Lightwallet protocol version mismatch. Consider upgrading Nighthawk Desktop.
+                    ⚠️ ${t("wallet.proto_mismatch")}
                   </div>`
                 : null}
             </div>
           `
-        : html`<div class="sub">${this.sync || "Syncing…"}</div>`}
+        : html`<div class="sub">${this.sync || t("wallet.syncing")}</div>`}
       ${this.reorgMsg
         ? html`<p class="warn">
-            Reorg: ${this.reorgMsg}
+            ${t("wallet.reorg_prefix")} ${this.reorgMsg}
             ${this.reorgHeight !== null
               ? html`<button @click=${this.recoverReorg}>
-                  Recover to h${this.reorgHeight}
+                  ${t("wallet.recover_to_height", { height: this.reorgHeight })}
                 </button>`
               : null}
           </p>`
         : null}
       <div class="actions">
         <button class="outline" @click=${() => this.openTransfer("request")}>
-          Request
+          ${t("nav.request")}
         </button>
         <button class="outline" @click=${() => this.openTransfer("receive")}>
-          Receive
+          ${t("nav.receive")}
         </button>
         <button
           class="outline"
           ?disabled=${!(snap ? spendReady(snap) : false)}
           @click=${() => this.openTransfer("send")}
         >
-          Send
+          ${t("nav.send")}
         </button>
       </div>
       <div class="card">
         <div class="addr">${this.address}</div>
         ${this.qr ? html`<img src=${this.qr} alt="QR" />` : null}
         <div>
-          <button @click=${this.copy}>Copy address</button>
+          <button @click=${this.copy}>${t("wallet.copy_address")}</button>
           <button ?disabled=${this.refreshing} @click=${this.refresh}>
-            ${this.refreshing ? "Refreshing…" : "Refresh"}
+            ${this.refreshing ? t("common.refreshing") : t("common.refresh")}
           </button>
         </div>
       </div>
       <div class="card">
         <div class="token-header">
-          <h3>Tokens &amp; Minting</h3>
+          <h3>${t("wallet.tokens_and_minting")}</h3>
           <button
             class="secondary small"
             ?disabled=${this.tokenBusy}
@@ -546,15 +548,15 @@ export class WalletScreen extends LitElement {
               this.error = "";
             }}
           >
-            ${this.showGenerateToken ? "Close" : "+ Generate Token"}
+            ${this.showGenerateToken ? t("common.close") : t("wallet.generate_token")}
           </button>
         </div>
         ${this.showGenerateToken
           ? html`
               <div class="inline-form">
-                <label>Alias (optional)</label>
+                <label>${t("wallet.alias_optional")}</label>
                 <input
-                  placeholder="e.g. MYTOK"
+                  placeholder=${t("wallet.alias_placeholder")}
                   .value=${this.newTokenAlias}
                   @input=${(e: Event) =>
                     (this.newTokenAlias = (e.target as HTMLInputElement).value)}
@@ -565,7 +567,9 @@ export class WalletScreen extends LitElement {
                     ?disabled=${this.tokenBusy}
                     @click=${this.generateToken}
                   >
-                    ${this.tokenBusy ? "Generating…" : "Create Mint Authority"}
+                    ${this.tokenBusy
+                      ? t("wallet.generating")
+                      : t("wallet.create_mint_authority")}
                   </button>
                 </div>
               </div>
@@ -574,19 +578,21 @@ export class WalletScreen extends LitElement {
         ${this.tokens.length
           ? html`
               ${this.tokens.map(
-                (t) => html`
+                (tok) => html`
                   <div class="token">
-                    <span>${t.displayLabel || `${t.tokenId.slice(0, 16)}…`}</span>
-                    <span>${formatDrkAtomic(t.balanceAtomic)}</span>
+                    <span>${tok.displayLabel || `${tok.tokenId.slice(0, 16)}…`}</span>
+                    <span>${formatDrkAtomic(tok.balanceAtomic)}</span>
                   </div>
                 `,
               )}
             `
-          : html`<div class="sub">No custom token balances yet</div>`}
+          : html`<div class="sub">${t("wallet.no_custom_tokens")}</div>`}
         ${this.mintAuthorities.length
           ? html`
               <div style="margin-top: 12px">
-                <div class="sub" style="margin-bottom: 6px">Mint Authorities</div>
+                <div class="sub" style="margin-bottom: 6px">
+                  ${t("wallet.mint_authorities")}
+                </div>
                 ${this.mintAuthorities.map((a) => {
                   const display = a.alias || `${a.tokenId.slice(0, 14)}…`;
                   const isMinting = this.mintTargetTokenId === a.tokenId;
@@ -595,7 +601,7 @@ export class WalletScreen extends LitElement {
                       <span>
                         <strong>${display}</strong>
                         <span class="badge ${a.frozen ? "frozen" : ""}"
-                          >${a.frozen ? "Frozen" : "Mintable"}</span
+                          >${a.frozen ? t("wallet.frozen") : t("wallet.mintable")}</span
                         >
                       </span>
                       <span>
@@ -608,28 +614,28 @@ export class WalletScreen extends LitElement {
                             this.mintAmount = "";
                           }}
                         >
-                          ${isMinting ? "Cancel" : "Mint"}
+                          ${isMinting ? t("common.cancel") : t("wallet.mint")}
                         </button>
                         <button
                           class="danger small"
                           ?disabled=${a.frozen || this.tokenBusy || !(snap ? spendReady(snap) : false)}
                           @click=${() => this.freezeToken(a.tokenId, display)}
                         >
-                          Freeze
+                          ${t("wallet.freeze")}
                         </button>
                       </span>
                     </div>
                     ${isMinting
                       ? html`
                           <div class="inline-form">
-                            <label>Amount to mint</label>
+                            <label>${t("wallet.amount_to_mint")}</label>
                             <input
                               placeholder="e.g. 100"
                               .value=${this.mintAmount}
                               @input=${(e: Event) =>
                                 (this.mintAmount = (e.target as HTMLInputElement).value)}
                             />
-                            <label>Recipient address</label>
+                            <label>${t("wallet.recipient_address")}</label>
                             <input
                               .value=${this.mintRecipient}
                               @input=${(e: Event) =>
@@ -641,7 +647,9 @@ export class WalletScreen extends LitElement {
                                 ?disabled=${this.tokenBusy}
                                 @click=${this.mintToken}
                               >
-                                ${this.tokenBusy ? "Minting…" : "Confirm Mint"}
+                                ${this.tokenBusy
+                                  ? t("wallet.minting")
+                                  : t("wallet.confirm_mint")}
                               </button>
                             </div>
                           </div>
@@ -654,20 +662,20 @@ export class WalletScreen extends LitElement {
           : null}
         ${this.tokenMessage ? html`<p class="ok">${this.tokenMessage}</p>` : null}
       </div>
-      <h3>Recent activity</h3>
+      <h3>${t("wallet.recent_activity")}</h3>
       ${this.txs.length === 0
-        ? html`<p class="sub">No transactions yet</p>`
-        : this.txs.map((t) => {
-            const x = this.txExtra[t.txHash];
+        ? html`<p class="sub">${t("wallet.no_transactions")}</p>`
+        : this.txs.map((tx) => {
+            const x = this.txExtra[tx.txHash];
             return html`
               <div class="tx">
-                <div>${t.summary || t.txHash.slice(0, 16)}…</div>
-                <div class="sub">h${t.height} · ${t.status}</div>
+                <div>${tx.summary || tx.txHash.slice(0, 16)}…</div>
+                <div class="sub">h${tx.height} · ${tx.status}</div>
                 ${x?.memo
-                  ? html`<div class="sub">Memo: ${x.memo}</div>`
+                  ? html`<div class="sub">${t("wallet.memo_prefix")} ${x.memo}</div>`
                   : null}
                 ${x?.recipient
-                  ? html`<div class="sub">To: ${x.recipient}</div>`
+                  ? html`<div class="sub">${t("wallet.to_prefix")} ${x.recipient}</div>`
                   : null}
               </div>
             `;

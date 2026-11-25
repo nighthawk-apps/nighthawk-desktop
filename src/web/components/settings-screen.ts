@@ -202,7 +202,7 @@ export class SettingsScreen extends LitElement {
     try {
       await navigator.clipboard.writeText(phrase);
       this.backupCopied = true;
-      this.message = "Seed phrase copied — clipboard will auto-clear in 60s";
+      this.message = t("settings.seed_copied_msg");
       if (this.backupCopiedTimer) window.clearTimeout(this.backupCopiedTimer);
       this.backupCopiedTimer = window.setTimeout(() => {
         this.backupCopied = false;
@@ -225,7 +225,7 @@ export class SettingsScreen extends LitElement {
       await api.setPrefs(this.prefs);
       this.prefs = await api.getPrefs();
       this.artiRunning = await api.artiStatus();
-      this.message = "Preferences saved";
+      this.message = t("settings.prefs_saved");
       this.dispatchEvent(
         new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
       );
@@ -241,7 +241,9 @@ export class SettingsScreen extends LitElement {
     try {
       await api.setNetwork(n);
       this.prefs = await api.getPrefs();
-      this.message = `Network set to ${n}.`;
+      this.message = t("settings.network_set", {
+        network: n === "mainnet" ? t("network.mainnet") : t("network.testnet"),
+      });
       this.dispatchEvent(
         new CustomEvent("prefs-changed", { bubbles: true, composed: true }),
       );
@@ -252,17 +254,13 @@ export class SettingsScreen extends LitElement {
   }
 
   private async doBackup() {
-    if (
-      !confirm(
-        "Show your seed phrase? Anyone who sees it can spend your funds.",
-      )
-    ) {
+    if (!confirm(t("settings.confirm_show_seed"))) {
       return;
     }
     this.error = "";
     try {
       this.backup = await api.backupMnemonic();
-      this.message = "Seed shown — auto-hides in 60s. Store safely.";
+      this.message = t("settings.seed_shown_msg");
       if (this.backupHideTimer) window.clearTimeout(this.backupHideTimer);
       this.backupHideTimer = window.setTimeout(() => {
         this.clearBackupDisplay();
@@ -273,7 +271,7 @@ export class SettingsScreen extends LitElement {
   }
 
   private async wipe() {
-    if (!confirm("Wipe all wallet data on this device?")) return;
+    if (!confirm(t("settings.confirm_wipe"))) return;
     this.error = "";
     try {
       this.clearBackupDisplay();
@@ -293,7 +291,9 @@ export class SettingsScreen extends LitElement {
         await api.artiStart();
       }
       this.artiRunning = await api.artiStatus();
-      this.message = this.artiRunning ? "Arti Tor proxy started" : "Arti stopped";
+      this.message = this.artiRunning
+        ? t("settings.arti_started_msg")
+        : t("settings.arti_stopped_msg");
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
@@ -302,10 +302,11 @@ export class SettingsScreen extends LitElement {
   private async createWalletProfile() {
     this.error = "";
     try {
-      await api.walletsCreate(this.newWalletLabel || "New wallet");
+      await api.walletsCreate(
+        this.newWalletLabel || t("settings.wallet_default_new_name"),
+      );
       this.wallets = await api.walletsList();
-      this.message =
-        "New wallet profile created — complete onboarding / restore.";
+      this.message = t("settings.wallet_created_msg");
       location.reload();
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
@@ -316,7 +317,7 @@ export class SettingsScreen extends LitElement {
     this.error = "";
     try {
       await api.walletsSwitch(id);
-      this.message = "Switched wallet — reloading…";
+      this.message = t("settings.wallet_switched_msg");
       location.reload();
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
@@ -329,14 +330,14 @@ export class SettingsScreen extends LitElement {
     const id = this.wallets.activeId;
     const label = this.renameLabel.trim();
     if (!label) {
-      this.error = "Enter a new label";
+      this.error = t("settings.wallet_enter_label");
       return;
     }
     try {
       await api.walletsRename(id, label);
       this.wallets = await api.walletsList();
       this.renameLabel = "";
-      this.message = "Wallet renamed";
+      this.message = t("settings.wallet_renamed_msg");
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
@@ -346,24 +347,20 @@ export class SettingsScreen extends LitElement {
     if (!this.wallets) return;
     this.error = "";
     if (id === "default") {
-      this.error = "Cannot remove the primary wallet profile — use Wipe wallet instead";
+      this.error = t("settings.wallet_cannot_remove_primary");
       return;
     }
     if (id === this.wallets.activeId) {
-      this.error = "Switch to another wallet first to remove this one";
+      this.error = t("settings.wallet_switch_to_remove");
       return;
     }
-    if (
-      !confirm(
-        `Remove wallet profile "${label}"? This permanently deletes that profile’s vault data.`,
-      )
-    ) {
+    if (!confirm(t("settings.wallet_confirm_remove", { label }))) {
       return;
     }
     try {
       await api.walletsRemove(id);
       this.wallets = await api.walletsList();
-      this.message = `Removed wallet profile "${label}"`;
+      this.message = t("settings.wallet_removed_msg", { label });
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
@@ -435,7 +432,7 @@ export class SettingsScreen extends LitElement {
         />
         <label>${t("settings.lwd_tls_pin")}</label>
         <input
-          placeholder="Optional for localhost; required for remote HTTPS"
+          placeholder=${t("settings.tls_pin_placeholder")}
           .value=${p.lightwalletTlsPinSha256 ?? ""}
           @input=${(e: Event) => {
             const v = (e.target as HTMLInputElement).value.trim();
@@ -443,7 +440,7 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>Stratum URL (mining)</label>
+        <label>${t("settings.stratum_url")}</label>
         <input
           .value=${p.stratumUrl}
           @input=${(e: Event) => {
@@ -451,7 +448,7 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>Chat nick</label>
+        <label>${t("chat.nick")}</label>
         <input
           .value=${p.chatNick}
           @input=${(e: Event) => {
@@ -459,7 +456,7 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>Privacy transport</label>
+        <label>${t("settings.privacy_transport")}</label>
         <select
           .value=${p.useNym ? "nym" : p.useTor ? "tor" : "direct"}
           @change=${(e: Event) => {
@@ -469,11 +466,11 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         >
-          <option value="tor">Tor (embedded Arti)</option>
-          <option value="nym">Nym mixnet</option>
-          <option value="direct">Direct (clearnet)</option>
+          <option value="tor">${t("settings.transport_tor")}</option>
+          <option value="nym">${t("settings.transport_nym")}</option>
+          <option value="direct">${t("settings.transport_direct")}</option>
         </select>
-        <label>Tor SOCKS port</label>
+        <label>${t("settings.tor_socks_port")}</label>
         <input
           type="number"
           .value=${String(p.torSocksPort)}
@@ -482,7 +479,7 @@ export class SettingsScreen extends LitElement {
             this.requestUpdate();
           }}
         />
-        <label>Nym SOCKS port</label>
+        <label>${t("settings.nym_socks_port")}</label>
         <input
           type="number"
           .value=${String(p.nymSocksPort ?? 1080)}
@@ -500,26 +497,26 @@ export class SettingsScreen extends LitElement {
               this.requestUpdate();
             }}
           />
-          Experimental UnifOMR (off by default; both wallets must register on this server)
+          ${t("settings.experimental_omr")}
         </label>
-        <p class="msg">
-          Off by default: when enabled, only payments with UnifOMR clues are
-          discovered — faster and more private, but <code>drk</code> sends may
-          not appear. Leave off to receive from all wallets via trial decryption.
-        </p>
+        <p class="msg">${t("settings.experimental_omr_hint")}</p>
         <div class="row">
-          <button @click=${this.save}>Save</button>
+          <button @click=${this.save}>${t("common.save")}</button>
           <button class="secondary" @click=${this.toggleArti}>
-            ${this.artiRunning ? "Stop Arti" : "Start Arti"}
+            ${this.artiRunning ? t("settings.stop_arti") : t("settings.start_arti")}
           </button>
-          <span class="msg"
-            >Arti: ${this.artiRunning ? "running" : "stopped"}</span
-          >
+          <span class="msg">
+            ${t("settings.arti_status", {
+              state: this.artiRunning
+                ? t("settings.arti_running")
+                : t("settings.arti_stopped"),
+            })}
+          </span>
         </div>
       </div>
 
       <div class="card">
-        <h3>Wallets</h3>
+        <h3>${t("settings.wallets_heading")}</h3>
         ${this.wallets
           ? html`
               <div class="wallet-list">
@@ -530,11 +527,17 @@ export class SettingsScreen extends LitElement {
                     <div class="wallet-item ${isActive ? "active" : ""}">
                       <div>
                         <strong>${w.label}</strong>
-                        ${isActive ? html` <span class="msg">(active)</span>` : null}
+                        ${isActive
+                          ? html` <span class="msg">${t("settings.wallet_active_tag")}</span>`
+                          : null}
                         ${isDefault
-                          ? html`<div class="hint">Primary profile (use Wipe wallet below to reset)</div>`
+                          ? html`<div class="hint">
+                              ${t("settings.wallet_primary_hint")}
+                            </div>`
                           : isActive
-                            ? html`<div class="hint">Switch to another wallet first to remove this one</div>`
+                            ? html`<div class="hint">
+                                ${t("settings.wallet_switch_to_remove")}
+                              </div>`
                             : null}
                       </div>
                       <div class="wallet-item-actions">
@@ -544,7 +547,7 @@ export class SettingsScreen extends LitElement {
                                 class="secondary"
                                 @click=${() => this.switchWallet(w.id)}
                               >
-                                Switch
+                                ${t("common.switch")}
                               </button>
                             `
                           : null}
@@ -554,11 +557,11 @@ export class SettingsScreen extends LitElement {
                                 class="danger"
                                 ?disabled=${isActive}
                                 title=${isActive
-                                  ? "Switch to another wallet first to remove this one"
-                                  : `Remove ${w.label}`}
+                                  ? t("settings.wallet_switch_to_remove")
+                                  : `${t("wallet.remove")}: ${w.label}`}
                                 @click=${() => this.removeWallet(w.id, w.label)}
                               >
-                                Remove
+                                ${t("common.remove")}
                               </button>
                             `
                           : null}
@@ -571,7 +574,7 @@ export class SettingsScreen extends LitElement {
           : null}
         <div class="row">
           <input
-            placeholder="New wallet label"
+            placeholder=${t("settings.wallet_new_label")}
             .value=${this.newWalletLabel}
             @input=${(e: Event) =>
               (this.newWalletLabel = (e.target as HTMLInputElement).value)}
@@ -582,25 +585,25 @@ export class SettingsScreen extends LitElement {
         </div>
         <div class="row">
           <input
-            placeholder="Rename active wallet"
+            placeholder=${t("settings.wallet_rename_placeholder")}
             .value=${this.renameLabel}
             @input=${(e: Event) =>
               (this.renameLabel = (e.target as HTMLInputElement).value)}
           />
-          <button class="secondary" @click=${this.renameWallet}>Rename</button>
+          <button class="secondary" @click=${this.renameWallet}>
+            ${t("common.rename")}
+          </button>
         </div>
       </div>
 
       <div class="card">
-        <h3>Security</h3>
-        <p>
-          No app PIN — this desktop build opens the wallet automatically. Seed
-          material is sealed with a desktop-local key (not a user secret); treat
-          the app data directory as sensitive.
-        </p>
+        <h3>${t("settings.security_heading")}</h3>
+        <p>${t("settings.security_notice")}</p>
         <div class="row">
-          <button @click=${this.doBackup}>Show seed backup</button>
-          <button class="danger" @click=${this.wipe}>Wipe wallet</button>
+          <button @click=${this.doBackup}>${t("settings.show_seed_backup")}</button>
+          <button class="danger" @click=${this.wipe}>
+            ${t("settings.wipe_wallet")}
+          </button>
         </div>
         ${this.backup.length
           ? html`
@@ -608,10 +611,12 @@ export class SettingsScreen extends LitElement {
                 <p class="words">${this.backup.join(" ")}</p>
                 <div class="row">
                   <button class="secondary" @click=${this.copyBackupSeed}>
-                    ${this.backupCopied ? "Copied! (clears in 60s)" : "Copy seed phrase"}
+                    ${this.backupCopied
+                      ? t("settings.seed_copied_btn")
+                      : t("settings.copy_seed_phrase")}
                   </button>
                   <button class="secondary" @click=${this.clearBackupDisplay}>
-                    Hide seed
+                    ${t("settings.hide_seed")}
                   </button>
                 </div>
               </div>
@@ -619,8 +624,8 @@ export class SettingsScreen extends LitElement {
           : null}
       </div>
       <div class="card">
-        <h3>About</h3>
-        <p>Nighthawk Desktop ${this.appVersion || "3.1.20"} — DarkFi UniFFI + Lit + Tauri</p>
+        <h3>${t("nav.about")}</h3>
+        <p>${t("settings.about_line", { version: this.appVersion || "3.1.21" })}</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

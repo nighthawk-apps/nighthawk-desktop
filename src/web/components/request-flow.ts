@@ -9,6 +9,7 @@ import {
   utf8ByteLength,
 } from "../lib/payment-uri";
 import { isValidDrkAmount } from "../lib/amount";
+import { t } from "../i18n";
 
 @customElement("request-flow")
 export class RequestFlow extends LitElement {
@@ -18,6 +19,11 @@ export class RequestFlow extends LitElement {
   @state() private qr = "";
   @state() private copied = false;
   @state() private error = "";
+  @state() private localeTick = 0;
+
+  private onLocale = () => {
+    this.localeTick++;
+  };
 
   static styles = css`
     label {
@@ -68,12 +74,18 @@ export class RequestFlow extends LitElement {
 
   override async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     try {
       this.address = await api.walletAddress();
       await this.refreshQr();
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
     }
+  }
+
+  override disconnectedCallback() {
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    super.disconnectedCallback();
   }
 
   private invoice(): string {
@@ -83,7 +95,7 @@ export class RequestFlow extends LitElement {
   private async refreshQr() {
     if (!this.address) return;
     if (this.amount.trim() && !isValidDrkAmount(this.amount.trim())) {
-      this.error = "Enter a valid DRK amount (up to 8 decimal places)";
+      this.error = t("send.invalid_amount");
       this.qr = "";
       return;
     }
@@ -110,15 +122,23 @@ export class RequestFlow extends LitElement {
   }
 
   override render() {
+    void this.localeTick;
     return html`
-      <p>One receive address. The QR is a drk: invoice.</p>
-      <label>Amount</label>
+      <p>${t("request.subtitle")}</p>
+      <label>${t("wallet.amount")}</label>
       <input .value=${this.amount} placeholder="0.0" @input=${this.onAmount} />
-      <label>Memo (${utf8ByteLength(this.memo)}/${MAX_PAYMENT_MEMO_BYTES} UTF-8 bytes)</label>
+      <label>
+        ${t("request.memo_label", {
+          used: utf8ByteLength(this.memo),
+          max: MAX_PAYMENT_MEMO_BYTES,
+        })}
+      </label>
       <textarea rows="2" .value=${this.memo} @input=${this.onMemo}></textarea>
       ${this.qr ? html`<img alt="Payment request" src=${this.qr} />` : null}
       <p class="invoice">${this.invoice()}</p>
-      <button @click=${this.copy}>${this.copied ? "Copied" : "Copy invoice"}</button>
+      <button @click=${this.copy}>
+        ${this.copied ? t("common.copied") : t("request.copy_invoice")}
+      </button>
       ${this.error ? html`<p class="err">${this.error}</p>` : null}
     `;
   }

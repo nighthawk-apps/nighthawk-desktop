@@ -1,0 +1,232 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Android wallet for darkfi-mobile-ffi
+        uses: actions/checkout@v4
+        with:
+          repository: nighthawk-apps/nighthawk-android-wallet
+          ref: nighthawk-dark
+          path: android-wallet
+          submodules: recursive
+      - name: Link the FFI crate where Cargo.toml expects it
+        run: ln -sfn "$GITHUB_WORKSPACE/android-wallet" "$(dirname "$GITHUB_WORKSPACE")/nighthawk-android-wallet"
+      - name: Install Linux Tauri and audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libsecret-1-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf \
+            pkg-config \
+            rpm \
+            squashfs-tools
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify xmrig sidecar is executable
+        run: chmod +x src-tauri/binaries/xmrig-x86_64-unknown-linux-gnu
+      - name: Build .deb, .rpm, and .AppImage bundles
+        env:
+          CI: "true"
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: pnpm tauri build --bundles deb,rpm,appimage
+      - name: Package portable tar.gz and collect Linux artifacts
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          OUT="$RUNNER_TEMP/release-linux"
+          STAGE="$RUNNER_TEMP/stage-linux/nighthawk-${VERSION}-linux-x86_64"
+          mkdir -p "$OUT" "$STAGE"
+
+          cp src-tauri/target/release/nighthawk-app-desktop "$STAGE/"
+          cp src-tauri/binaries/xmrig-x86_64-unknown-linux-gnu "$STAGE/xmrig"
+          chmod +x "$STAGE/nighthawk-app-desktop" "$STAGE/xmrig"
+          tar -C "$RUNNER_TEMP/stage-linux" -czf "$OUT/Nighthawk_${VERSION}_linux_x86_64.tar.gz" "nighthawk-${VERSION}-linux-x86_64"
+
+          find src-tauri/target/release/bundle/deb -maxdepth 2 -name "*.deb" -exec cp {} "$OUT/" \;
+          find src-tauri/target/release/bundle/rpm -maxdepth 2 -name "*.rpm" -exec cp {} "$OUT/" \;
+          find src-tauri/target/release/bundle/appimage -maxdepth 2 -name "*.AppImage" -exec cp {} "$OUT/" \;
+          ls -lh "$OUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: ${{ runner.temp }}/release-linux/*
+
+  build-macos:
+    name: Build macOS (aarch64 + universal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Android wallet for darkfi-mobile-ffi
+        uses: actions/checkout@v4
+        with:
+          repository: nighthawk-apps/nighthawk-android-wallet
+          ref: nighthawk-dark
+          path: android-wallet
+          submodules: recursive
+      - name: Link the FFI crate where Cargo.toml expects it
+        run: ln -sfn "$GITHUB_WORKSPACE/android-wallet" "$(dirname "$GITHUB_WORKSPACE")/nighthawk-android-wallet"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare universal xmrig Mach-O sidecar
+        run: |
+          chmod +x src-tauri/binaries/xmrig-aarch64-apple-darwin src-tauri/binaries/xmrig-x86_64-apple-darwin
+          lipo -create \
+            src-tauri/binaries/xmrig-aarch64-apple-darwin \
+            src-tauri/binaries/xmrig-x86_64-apple-darwin \
+            -output src-tauri/binaries/xmrig-universal-apple-darwin
+          chmod +x src-tauri/binaries/xmrig-universal-apple-darwin
+          lipo -info src-tauri/binaries/xmrig-universal-apple-darwin
+          shasum -a 256 src-tauri/binaries/xmrig-universal-apple-darwin
+      - name: Build macOS Apple Silicon (.dmg)
+        env:
+          CI: "true"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles dmg
+      - name: Build macOS Universal (.dmg)
+        env:
+          CI: "true"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target universal-apple-darwin --bundles dmg
+      - name: Collect macOS artifacts
+        run: |
+          OUT="$RUNNER_TEMP/release-macos"
+          mkdir -p "$OUT"
+          find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 2 -name "*.dmg" -exec cp {} "$OUT/" \;
+          find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 2 -name "*.dmg" -exec cp {} "$OUT/" \;
+          ls -lh "$OUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: ${{ runner.temp }}/release-macos/*
+
+  build-windows:
+    name: Build Windows (x64 MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Android wallet for darkfi-mobile-ffi
+        uses: actions/checkout@v4
+        with:
+          repository: nighthawk-apps/nighthawk-android-wallet
+          ref: nighthawk-dark
+          path: android-wallet
+          submodules: recursive
+      - name: Link the FFI crate where Cargo.toml expects it
+        shell: pwsh
+        run: |
+          $parent = Split-Path -Parent $env:GITHUB_WORKSPACE
+          $link = Join-Path $parent "nighthawk-android-wallet"
+          $target = Join-Path $env:GITHUB_WORKSPACE "android-wallet"
+          if (Test-Path $link) { Remove-Item $link -Force -Recurse }
+          New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build Windows NSIS (.exe) and MSI (.msi) installers
+        env:
+          CI: "true"
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi
+      - name: Package portable zip and collect Windows artifacts
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $out = Join-Path $env:RUNNER_TEMP "release-windows"
+          $stage = Join-Path $env:RUNNER_TEMP "stage-windows"
+          New-Item -ItemType Directory -Force -Path $out, $stage | Out-Null
+
+          Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/nighthawk-app-desktop.exe" (Join-Path $stage "Nighthawk.exe")
+          Copy-Item "src-tauri/binaries/xmrig-x86_64-pc-windows-msvc.exe" (Join-Path $stage "xmrig.exe")
+          Compress-Archive -Path "$stage\*" -DestinationPath (Join-Path $out "Nighthawk_${version}_windows_x64_portable.zip") -Force
+
+          Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $out
+          Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $out
+          Get-ChildItem $out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: ${{ runner.temp }}/release-windows/*
+
+  release:
+    name: Create Draft Release & SHA256SUMS
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd dist-artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload checksummed release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nighthawk-desktop-release-bundle
+          path: dist-artifacts/*
+      - name: Upload draft GitHub Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: dist-artifacts/*

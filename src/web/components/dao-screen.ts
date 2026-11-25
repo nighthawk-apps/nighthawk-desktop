@@ -12,6 +12,7 @@ import {
   type DaoSummary,
 } from "../lib/api";
 import { isValidDrkAmount } from "../lib/amount";
+import { t } from "../i18n";
 
 @customElement("dao-screen")
 export class DaoScreen extends LitElement {
@@ -47,6 +48,11 @@ export class DaoScreen extends LitElement {
   @state() private loading = false;
   @state() private votingProposal: string | null = null;
   @state() private executingProposal: string | null = null;
+  @state() private localeTick = 0;
+
+  private onLocale = () => {
+    this.localeTick++;
+  };
 
   static styles = css`
     :host {
@@ -311,7 +317,13 @@ export class DaoScreen extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     await this.refreshDaos();
+  }
+
+  override disconnectedCallback() {
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    super.disconnectedCallback();
   }
 
   private async refreshDaos() {
@@ -349,7 +361,7 @@ export class DaoScreen extends LitElement {
       const text = await api.daoTreasury(daoName);
       this.treasuryByDao = {
         ...this.treasuryByDao,
-        [daoName]: text.trim() || "Treasury is empty.",
+        [daoName]: text.trim() || t("dao.treasury_empty"),
       };
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
@@ -361,19 +373,19 @@ export class DaoScreen extends LitElement {
     const govTokenId = this.createGovTokenId.trim() || "DRK";
     const ratio = Number(this.createApprovalRatio);
     if (!name) {
-      this.error = "Enter a DAO name";
+      this.error = t("dao.err_name");
       return;
     }
     if (!isValidDrkAmount(this.createProposerLimit) || !isValidDrkAmount(this.createQuorum)) {
-      this.error = "Proposer limit and quorum must be valid positive amounts";
+      this.error = t("dao.err_limits");
       return;
     }
     if (this.createEarlyExecQuorum.trim() && !isValidDrkAmount(this.createEarlyExecQuorum)) {
-      this.error = "Early execution quorum must be a valid positive amount";
+      this.error = t("dao.err_early_exec");
       return;
     }
     if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) {
-      this.error = "Approval ratio must be between 0.01 and 1.0";
+      this.error = t("dao.err_ratio");
       return;
     }
     this.loading = true;
@@ -388,7 +400,7 @@ export class DaoScreen extends LitElement {
         approvalRatio: ratio,
         govTokenId,
       });
-      this.message = `DAO created: ${created}`;
+      this.message = t("dao.created_msg", { name: created });
       this.showCreateModal = false;
       this.createName = "";
       this.selectedDao = created;
@@ -402,7 +414,7 @@ export class DaoScreen extends LitElement {
 
   private async importDao() {
     if (!this.importName.trim() || !this.importToml.trim()) {
-      this.error = "Provide a DAO name and role TOML";
+      this.error = t("dao.err_import_fields");
       return;
     }
     this.loading = true;
@@ -410,7 +422,7 @@ export class DaoScreen extends LitElement {
     this.message = "";
     try {
       const res = await api.daoImport(this.importName.trim(), this.importToml.trim());
-      this.message = `DAO imported: ${res}`;
+      this.message = t("dao.imported_msg", { name: res });
       this.showImportModal = false;
       this.importName = "";
       this.importToml = "";
@@ -424,7 +436,7 @@ export class DaoScreen extends LitElement {
 
   private async fundDao() {
     if (!this.fundDaoName || !isValidDrkAmount(this.fundAmount)) {
-      this.error = "Enter a valid positive amount (up to 8 decimal places)";
+      this.error = t("dao.err_fund_amount");
       return;
     }
     this.loading = true;
@@ -436,7 +448,7 @@ export class DaoScreen extends LitElement {
         amount: this.fundAmount.trim(),
         tokenId: this.fundTokenId.trim() || undefined,
       });
-      this.message = `Treasury funded: ${tx}`;
+      this.message = t("dao.funded_msg", { tx });
       this.showFundModal = false;
       this.fundAmount = "";
       this.fundTokenId = "";
@@ -468,7 +480,7 @@ export class DaoScreen extends LitElement {
     this.message = "";
     try {
       const tx = await api.daoVote(bulla, yes);
-      this.message = `Vote broadcast: ${tx}`;
+      this.message = t("dao.vote_broadcast", { tx });
       if (this.selectedDao) {
         await this.loadProposals(this.selectedDao);
       }
@@ -485,7 +497,7 @@ export class DaoScreen extends LitElement {
     this.message = "";
     try {
       const tx = await api.daoExecProposal(bulla);
-      this.message = `Proposal executed: ${tx}`;
+      this.message = t("dao.proposal_executed", { tx });
       if (this.selectedDao) {
         await this.loadProposals(this.selectedDao);
       }
@@ -498,16 +510,16 @@ export class DaoScreen extends LitElement {
 
   private async proposeTransfer() {
     if (!this.selectedDao || !this.proposeAmount.trim() || !this.proposeRecipient.trim()) {
-      this.error = "Please fill in amount and recipient address";
+      this.error = t("dao.err_propose_fields");
       return;
     }
     if (!isValidDrkAmount(this.proposeAmount)) {
-      this.error = "Enter a valid amount (up to 8 decimal places)";
+      this.error = t("dao.err_propose_amount");
       return;
     }
     const duration = Number(this.proposeDuration);
     if (!Number.isInteger(duration) || duration <= 0) {
-      this.error = "Duration must be a positive whole number of block windows";
+      this.error = t("dao.err_duration");
       return;
     }
     this.loading = true;
@@ -521,7 +533,7 @@ export class DaoScreen extends LitElement {
         tokenId: this.proposeTokenId.trim() || undefined,
         recipientAddress: this.proposeRecipient.trim(),
       });
-      this.message = `Proposal created: ${tx}`;
+      this.message = t("dao.proposal_created", { tx });
       this.showProposeModal = false;
       this.proposeAmount = "";
       this.proposeRecipient = "";
@@ -534,9 +546,10 @@ export class DaoScreen extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     return html`
       <div class="header-row">
-        <h2 class="screen-title">DAO</h2>
+        <h2 class="screen-title">${t("nav.dao")}</h2>
         <div class="actions-row" style="margin-top: 0">
           <button
             class="small"
@@ -546,7 +559,7 @@ export class DaoScreen extends LitElement {
               this.showCreateModal = true;
             }}
           >
-            Create DAO
+            ${t("dao.create")}
           </button>
           <button
             class="secondary small"
@@ -556,10 +569,10 @@ export class DaoScreen extends LitElement {
               this.showImportModal = true;
             }}
           >
-            Import DAO
+            ${t("dao.import")}
           </button>
           <button class="secondary small" ?disabled=${this.loading} @click=${this.refreshDaos}>
-            ${this.loading ? "Refreshing…" : "Refresh DAOs"}
+            ${this.loading ? t("common.refreshing") : t("dao.refresh")}
           </button>
         </div>
       </div>
@@ -570,9 +583,9 @@ export class DaoScreen extends LitElement {
       ${this.daos.length === 0
         ? html`
             <div class="card empty">
-              <p>No DAOs in this wallet yet.</p>
+              <p>${t("dao.empty")}</p>
               <p style="font-size: var(--font-size-xs)">
-                Create a new DAO or import a role TOML exported from another Nighthawk wallet or <code>drk</code>.
+                ${t("dao.empty_hint")}
               </p>
             </div>
           `
@@ -598,13 +611,15 @@ export class DaoScreen extends LitElement {
 
         <div class="stats-row">
           <div>
-            Quorum: <span class="stat-val">${dao.quorumDisplay}</span>
+            ${t("dao.quorum")} <span class="stat-val">${dao.quorumDisplay}</span>
           </div>
           <div>
-            Proposer limit: <span class="stat-val">${dao.proposerLimitDisplay}</span>
+            ${t("dao.proposer_limit")}
+            <span class="stat-val">${dao.proposerLimitDisplay}</span>
           </div>
           <div>
-            Approval: <span class="stat-val">${dao.approvalRatioPercent.toFixed(1)}%</span>
+            ${t("approval.label")}
+            <span class="stat-val">${dao.approvalRatioPercent.toFixed(1)}%</span>
           </div>
         </div>
 
@@ -617,13 +632,13 @@ export class DaoScreen extends LitElement {
 
         <div class="roles-row">
           <span class="role-chip ${dao.canPropose ? "enabled" : ""}"
-            >${dao.canPropose ? "✓ Propose" : "✕ Propose"}</span
+            >${dao.canPropose ? "✓" : "✕"} ${t("dao.role_propose")}</span
           >
           <span class="role-chip ${dao.canVote ? "enabled" : ""}"
-            >${dao.canVote ? "✓ Vote" : "✕ Vote"}</span
+            >${dao.canVote ? "✓" : "✕"} ${t("dao.role_vote")}</span
           >
           <span class="role-chip ${dao.canExec ? "enabled" : ""}"
-            >${dao.canExec ? "✓ Execute" : "✕ Execute"}</span
+            >${dao.canExec ? "✓" : "✕"} ${t("dao.role_execute")}</span
           >
         </div>
 
@@ -632,18 +647,20 @@ export class DaoScreen extends LitElement {
             class="secondary small"
             @click=${() => this.loadProposals(dao.name)}
           >
-            ${isSelected ? "Refresh Proposals" : "View Proposals"}
+            ${isSelected ? t("dao.refresh_proposals") : t("dao.view_proposals")}
           </button>
           <button
             class="small"
             ?disabled=${!dao.canPropose}
-            title=${dao.canPropose ? "Create a treasury transfer proposal" : "This wallet does not hold the proposer key"}
+            title=${dao.canPropose
+              ? t("dao.propose_tooltip")
+              : t("dao.no_proposer_key")}
             @click=${() => {
               this.selectedDao = dao.name;
               this.showProposeModal = true;
             }}
           >
-            Propose Transfer
+            ${t("dao.propose_transfer")}
           </button>
           <button
             class="secondary small"
@@ -654,13 +671,13 @@ export class DaoScreen extends LitElement {
               this.showFundModal = true;
             }}
           >
-            Fund
+            ${t("dao.fund")}
           </button>
           <button
             class="secondary small"
             @click=${() => this.loadTreasury(dao.name)}
           >
-            Treasury
+            ${t("dao.treasury")}
           </button>
           <button
             class="secondary small"
@@ -671,7 +688,7 @@ export class DaoScreen extends LitElement {
               this.showExportModal = true;
             }}
           >
-            Export Role
+            ${t("dao.export_role")}
           </button>
         </div>
 
@@ -685,7 +702,7 @@ export class DaoScreen extends LitElement {
     if (this.proposals.length === 0) {
       return html`
         <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--color-text-muted)">
-          No active proposals for ${dao.name}.
+          ${t("dao.no_proposals", { name: dao.name })}
         </div>
       `;
     }
@@ -693,7 +710,7 @@ export class DaoScreen extends LitElement {
     return html`
       <div style="margin-top: 16px">
         <h4 style="margin: 0 0 8px; color: var(--color-text-header)">
-          ${dao.name} Proposals (${this.proposals.length})
+          ${t("dao.proposals_heading", { name: dao.name, count: this.proposals.length })}
         </h4>
         ${this.proposals.map((p) => this.renderProposal(p, dao))}
       </div>
@@ -702,7 +719,11 @@ export class DaoScreen extends LitElement {
 
   private renderProposal(p: DaoProposalSummary, dao: DaoSummary) {
     const statusClass = p.isExecuted ? "executed" : p.mintHeight > 0 ? "active" : "pending";
-    const statusLabel = p.isExecuted ? "Executed" : p.mintHeight > 0 ? "Active" : "Pending";
+    const statusLabel = p.isExecuted
+      ? t("common.executed")
+      : p.mintHeight > 0
+        ? t("common.active")
+        : t("common.pending");
     const isVoting = this.votingProposal === p.proposalBullaB58;
     const isExecuting = this.executingProposal === p.proposalBullaB58;
 
@@ -712,9 +733,14 @@ export class DaoScreen extends LitElement {
           <span class="badge ${statusClass}">${statusLabel}</span>
           <span class="proposal-bulla">${p.proposalBullaB58.slice(0, 16)}…</span>
         </div>
-        <div class="proposal-summary">${p.summaryLine || "Transfer Proposal"}</div>
+        <div class="proposal-summary">
+          ${p.summaryLine || t("dao.transfer_proposal")}
+        </div>
         <div style="font-size: var(--font-size-xs); color: var(--color-text-muted); margin-bottom: 8px">
-          Duration: ${p.durationBlockwindows} block windows · Calls: ${p.authCallCount}
+          ${t("dao.proposal_meta", {
+            duration: p.durationBlockwindows,
+            calls: p.authCallCount,
+          })}
         </div>
         ${!p.isExecuted
           ? html`
@@ -722,26 +748,26 @@ export class DaoScreen extends LitElement {
                 <button
                   class="vote-yes small"
                   ?disabled=${isVoting || !dao.canVote}
-                  title=${dao.canVote ? "Vote YES" : "This wallet does not hold the voter key"}
+                  title=${dao.canVote ? t("dao.vote_yes") : t("dao.no_voter_key")}
                   @click=${() => this.vote(p.proposalBullaB58, true)}
                 >
-                  ${isVoting ? "Voting…" : "Vote YES"}
+                  ${isVoting ? t("dao.voting") : t("dao.vote_yes")}
                 </button>
                 <button
                   class="vote-no small"
                   ?disabled=${isVoting || !dao.canVote}
-                  title=${dao.canVote ? "Vote NO" : "This wallet does not hold the voter key"}
+                  title=${dao.canVote ? t("dao.vote_no") : t("dao.no_voter_key")}
                   @click=${() => this.vote(p.proposalBullaB58, false)}
                 >
-                  ${isVoting ? "Voting…" : "Vote NO"}
+                  ${isVoting ? t("dao.voting") : t("dao.vote_no")}
                 </button>
                 <button
                   class="secondary small"
                   ?disabled=${isExecuting || !dao.canExec}
-                  title=${dao.canExec ? "Execute approved proposal" : "This wallet does not hold the executor key"}
+                  title=${dao.canExec ? t("dao.exec_tooltip") : t("dao.no_executor_key")}
                   @click=${() => this.execProposal(p.proposalBullaB58)}
                 >
-                  ${isExecuting ? "Executing…" : "Execute"}
+                  ${isExecuting ? t("dao.executing") : t("dao.role_execute")}
                 </button>
               </div>
             `
@@ -756,38 +782,38 @@ export class DaoScreen extends LitElement {
         if (e.target === e.currentTarget) this.showCreateModal = false;
       }}>
         <div class="modal">
-          <h3>Create DAO</h3>
-          <label>DAO Name</label>
+          <h3>${t("dao.create")}</h3>
+          <label>${t("dao.modal_name")}</label>
           <input
             placeholder="e.g. my-dao"
             .value=${this.createName}
             @input=${(e: Event) => (this.createName = (e.target as HTMLInputElement).value)}
           />
-          <label>Governance Token ID (or DRK)</label>
+          <label>${t("dao.modal_gov_token")}</label>
           <input
             placeholder="DRK"
             .value=${this.createGovTokenId}
             @input=${(e: Event) => (this.createGovTokenId = (e.target as HTMLInputElement).value)}
           />
-          <label>Proposer Minimum</label>
+          <label>${t("dao.modal_proposer_min")}</label>
           <input
             placeholder="1"
             .value=${this.createProposerLimit}
             @input=${(e: Event) => (this.createProposerLimit = (e.target as HTMLInputElement).value)}
           />
-          <label>Quorum</label>
+          <label>${t("dao.modal_quorum")}</label>
           <input
             placeholder="10"
             .value=${this.createQuorum}
             @input=${(e: Event) => (this.createQuorum = (e.target as HTMLInputElement).value)}
           />
-          <label>Early Execution Quorum (optional, defaults to Quorum)</label>
+          <label>${t("dao.modal_early_exec")}</label>
           <input
-            placeholder="Optional"
+            placeholder=${t("dao.modal_optional")}
             .value=${this.createEarlyExecQuorum}
             @input=${(e: Event) => (this.createEarlyExecQuorum = (e.target as HTMLInputElement).value)}
           />
-          <label>Approval Ratio (0.01 to 1.0, e.g. 0.5 for 50%)</label>
+          <label>${t("dao.modal_ratio")}</label>
           <input
             type="number"
             step="0.05"
@@ -798,10 +824,10 @@ export class DaoScreen extends LitElement {
           />
           <div class="modal-actions">
             <button class="secondary" @click=${() => (this.showCreateModal = false)}>
-              Cancel
+              ${t("common.cancel")}
             </button>
             <button ?disabled=${this.loading} @click=${this.createDao}>
-              ${this.loading ? "Creating…" : "Create & Mint DAO"}
+              ${this.loading ? t("common.creating") : t("dao.create_and_mint")}
             </button>
           </div>
         </div>
@@ -815,26 +841,26 @@ export class DaoScreen extends LitElement {
         if (e.target === e.currentTarget) this.showImportModal = false;
       }}>
         <div class="modal">
-          <h3>Import DAO</h3>
-          <label>Local DAO Name</label>
+          <h3>${t("dao.import")}</h3>
+          <label>${t("dao.local_name")}</label>
           <input
             placeholder="e.g. community-dao"
             .value=${this.importName}
             @input=${(e: Event) => (this.importName = (e.target as HTMLInputElement).value)}
           />
-          <label>DAO Role TOML</label>
+          <label>${t("dao.role_toml")}</label>
           <textarea
             rows="6"
-            placeholder="Paste exported DAO TOML…"
+            placeholder=${t("dao.paste_toml")}
             .value=${this.importToml}
             @input=${(e: Event) => (this.importToml = (e.target as HTMLTextAreaElement).value)}
           ></textarea>
           <div class="modal-actions">
             <button class="secondary" @click=${() => (this.showImportModal = false)}>
-              Cancel
+              ${t("common.cancel")}
             </button>
             <button ?disabled=${this.loading} @click=${this.importDao}>
-              ${this.loading ? "Importing…" : "Import"}
+              ${this.loading ? t("dao.importing") : t("dao.import_action")}
             </button>
           </div>
         </div>
@@ -848,25 +874,25 @@ export class DaoScreen extends LitElement {
         if (e.target === e.currentTarget) this.showFundModal = false;
       }}>
         <div class="modal">
-          <h3>Fund DAO Treasury — ${this.fundDaoName}</h3>
-          <label>Amount</label>
+          <h3>${t("dao.fund_title", { name: this.fundDaoName })}</h3>
+          <label>${t("wallet.amount")}</label>
           <input
             placeholder="e.g. 5.0"
             .value=${this.fundAmount}
             @input=${(e: Event) => (this.fundAmount = (e.target as HTMLInputElement).value)}
           />
-          <label>Token ID (optional, empty for native DRK)</label>
+          <label>${t("dao.token_id_optional")}</label>
           <input
-            placeholder="Optional token ID"
+            placeholder=${t("dao.token_id_placeholder")}
             .value=${this.fundTokenId}
             @input=${(e: Event) => (this.fundTokenId = (e.target as HTMLInputElement).value)}
           />
           <div class="modal-actions">
             <button class="secondary" @click=${() => (this.showFundModal = false)}>
-              Cancel
+              ${t("common.cancel")}
             </button>
             <button ?disabled=${this.loading} @click=${this.fundDao}>
-              ${this.loading ? "Funding…" : "Fund Treasury"}
+              ${this.loading ? t("dao.funding") : t("dao.fund_treasury")}
             </button>
           </div>
         </div>
@@ -880,26 +906,26 @@ export class DaoScreen extends LitElement {
         if (e.target === e.currentTarget) this.showExportModal = false;
       }}>
         <div class="modal">
-          <h3>Export DAO Role — ${this.exportDaoName}</h3>
-          <label>Role</label>
+          <h3>${t("dao.export_title", { name: this.exportDaoName })}</h3>
+          <label>${t("dao.role_label")}</label>
           <select
             .value=${this.exportRole}
             @change=${(e: Event) => (this.exportRole = (e.target as HTMLSelectElement).value)}
           >
-            <option value="voter">Voter</option>
-            <option value="proposer">Proposer</option>
-            <option value="executor">Executor</option>
-            <option value="all">All keys</option>
+            <option value="voter">${t("dao.role_voter")}</option>
+            <option value="proposer">${t("dao.role_proposer")}</option>
+            <option value="executor">${t("dao.role_executor")}</option>
+            <option value="all">${t("dao.role_all")}</option>
           </select>
           ${this.exportedToml
             ? html`
-                <label>Exported TOML (keep secret keys safe)</label>
+                <label>${t("dao.exported_toml_label")}</label>
                 <textarea rows="6" readonly .value=${this.exportedToml}></textarea>
               `
             : null}
           <div class="modal-actions">
             <button class="secondary" @click=${() => (this.showExportModal = false)}>
-              Close
+              ${t("common.close")}
             </button>
             ${this.exportedToml
               ? html`
@@ -907,15 +933,15 @@ export class DaoScreen extends LitElement {
                     class="secondary"
                     @click=${() => {
                       void navigator.clipboard.writeText(this.exportedToml);
-                      this.message = "Role TOML copied to clipboard";
+                      this.message = t("dao.toml_copied");
                     }}
                   >
-                    Copy TOML
+                    ${t("dao.copy_toml")}
                   </button>
                 `
               : null}
             <button ?disabled=${this.loading} @click=${this.runExportRole}>
-              ${this.loading ? "Exporting…" : "Export"}
+              ${this.loading ? t("dao.exporting") : t("dao.export_action")}
             </button>
           </div>
         </div>
@@ -929,42 +955,42 @@ export class DaoScreen extends LitElement {
         if (e.target === e.currentTarget) this.showProposeModal = false;
       }}>
         <div class="modal">
-          <h3>Propose Transfer — ${this.selectedDao}</h3>
+          <h3>${t("dao.propose_title", { name: this.selectedDao })}</h3>
 
-          <label>Amount (DRK or atomic token)</label>
+          <label>${t("wallet.amount_hint")}</label>
           <input
             placeholder="e.g. 10.5"
             .value=${this.proposeAmount}
             @input=${(e: Event) => (this.proposeAmount = (e.target as HTMLInputElement).value)}
           />
 
-          <label>Recipient Address</label>
+          <label>${t("dao.propose_recipient")}</label>
           <input
             placeholder="drk1..."
             .value=${this.proposeRecipient}
             @input=${(e: Event) => (this.proposeRecipient = (e.target as HTMLInputElement).value)}
           />
 
-          <label>Duration (block windows, default 10)</label>
+          <label>${t("mine.duration")}</label>
           <input
             type="number"
             .value=${this.proposeDuration}
             @input=${(e: Event) => (this.proposeDuration = (e.target as HTMLInputElement).value)}
           />
 
-          <label>Token ID (optional, empty for native DRK)</label>
+          <label>${t("dao.token_id_optional")}</label>
           <input
-            placeholder="Optional custom token ID"
+            placeholder=${t("dao.propose_token_placeholder")}
             .value=${this.proposeTokenId}
             @input=${(e: Event) => (this.proposeTokenId = (e.target as HTMLInputElement).value)}
           />
 
           <div class="modal-actions">
             <button class="secondary" @click=${() => (this.showProposeModal = false)}>
-              Cancel
+              ${t("common.cancel")}
             </button>
             <button ?disabled=${this.loading} @click=${this.proposeTransfer}>
-              ${this.loading ? "Proposing…" : "Submit Proposal"}
+              ${this.loading ? t("dao.proposing") : t("dao.submit_proposal")}
             </button>
           </div>
         </div>

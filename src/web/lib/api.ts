@@ -238,7 +238,6 @@ export const api = {
   walletAddress: () => invokeCmd<string>("wallet_address"),
   walletAddresses: () => invokeCmd<string[]>("wallet_addresses"),
   walletRefresh: () => invokeCmd<SyncSnapshot>("wallet_refresh"),
-  walletSyncSnapshot: () => invokeCmd<SyncSnapshot>("wallet_sync_snapshot"),
   walletLightSync: () => invokeCmd<LightSyncState>("wallet_light_sync"),
   walletListTxs: () => invokeCmd<TxRecord[]>("wallet_list_txs"),
   listTokenBalances: () => invokeCmd<TokenBalance[]>("list_token_balances"),
@@ -276,8 +275,6 @@ export const api = {
     invokeCmd<DaoProposalSummary[]>("list_proposals", {
       daoName: daoName ?? null,
     }),
-  getProposal: (proposalBullaB58: string) =>
-    invokeCmd("get_proposal", { proposalBullaB58 }),
   daoCreate: (args: {
     name: string;
     proposerLimit: string;
@@ -313,12 +310,6 @@ export const api = {
   artiStart: () => invokeCmd<boolean>("arti_start"),
   artiStop: () => invokeCmd<void>("arti_stop"),
   artiStatus: () => invokeCmd<boolean>("arti_status"),
-  nymStatus: () => invokeCmd<string>("nym_status"),
-  transportSnapshot: () => invokeCmd<string>("transport_snapshot"),
-  setTransport: (mode: "nym" | "tor" | "direct") =>
-    invokeCmd<string>("set_transport", { mode }),
-  transportContinueWithoutNym: () =>
-    invokeCmd<string>("transport_continue_without_nym"),
 
   dmGenerateKeypair: () => invokeCmd<DmKeypair>("dm_generate_keypair"),
   dmLoadKeypair: () => invokeCmd<DmKeypair | null>("dm_load_keypair"),
@@ -333,10 +324,6 @@ export const api = {
     invokeCmd<DmContactRecord[]>("dm_contacts_bump_unread", { publicB58 }),
   dmContactsMigrate: (legacy: DmContactRecord[]) =>
     invokeCmd<DmContactRecord[]>("dm_contacts_migrate", { legacy }),
-  dmEncrypt: (args: { theirPublicB58: string; plaintext: string }) =>
-    invokeCmd<string>("dm_encrypt", { ...args }),
-  dmDecrypt: (args: { theirPublicB58: string; ciphertextB58: string }) =>
-    invokeCmd<string>("dm_decrypt", { ...args }),
 
   addressBookList: () => invokeCmd<AddressBookEntry[]>("address_book_list"),
   addressBookUpsert: (entry: AddressBookEntry) =>
@@ -374,7 +361,6 @@ export const api = {
   mineStop: () => invokeCmd<void>("mine_stop"),
 
   setNetwork: (network: Network) => invokeCmd<void>("set_network", { network }),
-  setLwdUrl: (url: string) => invokeCmd<void>("set_lwd_url", { url }),
   backupMnemonic: () => invokeCmd<string[]>("backup_mnemonic"),
   wipeWallet: () => invokeCmd<void>("wipe_wallet"),
 };

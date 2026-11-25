@@ -6,14 +6,13 @@ use crate::state::{AppState, MinerHandle};
 use crate::wallets;
 use darkfi_mobile_ffi::{
     DarkfiWalletHandle, DarkfiWalletNativeError, DarkircEventCallback, DarkircTransport,
-    DrkBootstrapConfig, ReorgEvent, ReorgEventCallback, chacha_decrypt_dm, chacha_encrypt_dm,
-    clear_dm_contacts, darkirc_connection_phase, darkirc_status, generate_darkfi_mnemonic,
-    generate_dm_keypair, is_arti_running, is_nym_running, nym_status as ffi_nym_status,
-    redact_sync_error, register_dm_contact, send_chat_message, set_network_storage_dir,
-    start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc, stop_nym_proxy,
-    transport_continue_without_nym as ffi_transport_continue_without_nym,
+    DrkBootstrapConfig, ReorgEvent, ReorgEventCallback, clear_dm_contacts,
+    darkirc_connection_phase, darkirc_status, generate_darkfi_mnemonic, generate_dm_keypair,
+    is_arti_running, is_nym_running, redact_sync_error, register_dm_contact, send_chat_message,
+    set_network_storage_dir, start_arti_proxy, start_darkirc, stop_arti_proxy, stop_darkirc,
+    stop_nym_proxy,
     transport_manager::{self, TransportKind},
-    transport_snapshot_json, unregister_dm_contact, validate_darkfi_mnemonic,
+    unregister_dm_contact, validate_darkfi_mnemonic,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -613,18 +612,6 @@ pub async fn wallet_refresh(state: State<'_, AppState>) -> Result<SyncSnapshotDt
 }
 
 #[tauri::command]
-pub async fn wallet_sync_snapshot(state: State<'_, AppState>) -> Result<SyncSnapshotDto, String> {
-    with_wallet_blocking(&state, |w| {
-        let s = w.sync_snapshot().map_err(ffi_err)?;
-        Ok(SyncSnapshotDto {
-            scanned_blocks: s.scanned_blocks,
-            chain_tip: s.chain_tip,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn wallet_light_sync(state: State<'_, AppState>) -> Result<LightSyncDto, String> {
     with_wallet_blocking(&state, |w| {
         let s = w.light_sync_snapshot();
@@ -699,7 +686,7 @@ pub async fn estimate_fee(
     token_id: Option<String>,
 ) -> Result<i64, String> {
     // Validates inputs and returns the fixed SCHEDULE_TRANSFER_FEE_ATOMIC
-    // schedule constant (5_000_000 atomic), not a darkfid gas measurement.
+    // schedule constant (5_420_000 atomic), not a darkfid gas measurement.
     with_wallet_blocking(&state, |w| {
         reject_until_spend_ready(&w)?;
         w.estimate_transfer_fee(recipient, amount, token_id, memo)
@@ -863,24 +850,6 @@ pub struct DaoProposalSummaryDto {
     pub summary_line: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DaoProposalDetailDto {
-    pub proposal_bulla_b58: String,
-    pub dao_name: String,
-    pub dao_bulla_b58: String,
-    pub auth_call_count: u32,
-    pub duration_blockwindows: u64,
-    pub creation_blockwindow: u64,
-    pub mint_height: i64,
-    pub exec_height: i64,
-    pub is_executed: bool,
-    pub summary_line: String,
-    pub propose_tx_hash: Option<String>,
-    pub exec_tx_hash: Option<String>,
-    pub has_plaintext_data: bool,
-}
-
 #[tauri::command]
 pub async fn list_daos(state: State<'_, AppState>) -> Result<Vec<DaoSummaryDto>, String> {
     with_wallet_blocking(&state, |w| {
@@ -926,32 +895,6 @@ pub async fn list_proposals(
                 summary_line: p.summary_line,
             })
             .collect())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_proposal(
-    state: State<'_, AppState>,
-    proposal_bulla_b58: String,
-) -> Result<DaoProposalDetailDto, String> {
-    with_wallet_blocking(&state, |w| {
-        let p = w.get_proposal(proposal_bulla_b58).map_err(ffi_err)?;
-        Ok(DaoProposalDetailDto {
-            proposal_bulla_b58: p.proposal_bulla_b58,
-            dao_name: p.dao_name,
-            dao_bulla_b58: p.dao_bulla_b58,
-            auth_call_count: p.auth_call_count,
-            duration_blockwindows: p.duration_blockwindows,
-            creation_blockwindow: p.creation_blockwindow,
-            mint_height: p.mint_height,
-            exec_height: p.exec_height,
-            is_executed: p.is_executed,
-            summary_line: p.summary_line,
-            propose_tx_hash: p.propose_tx_hash,
-            exec_tx_hash: p.exec_tx_hash,
-            has_plaintext_data: p.has_plaintext_data,
-        })
     })
     .await
 }
@@ -1106,76 +1049,10 @@ pub fn arti_status() -> bool {
     is_arti_running()
 }
 
-#[tauri::command]
-pub fn nym_status() -> String {
-    ffi_nym_status()
-}
-
-#[tauri::command]
-pub fn transport_snapshot() -> String {
-    transport_snapshot_json()
-}
-
-#[tauri::command]
-pub async fn set_transport(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    mode: String,
-) -> Result<String, String> {
-    let mut prefs = state.prefs.lock().clone();
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "nym" => {
-            prefs.use_nym = true;
-            prefs.use_tor = false;
-        }
-        "tor" => {
-            prefs.use_nym = false;
-            prefs.use_tor = true;
-        }
-        "direct" => {
-            prefs.use_nym = false;
-            prefs.use_tor = false;
-        }
-        other => return Err(format!("unknown transport mode: {other}")),
-    }
-    set_prefs(app, state, prefs).await?;
-    Ok(transport_snapshot_json())
-}
-
-#[tauri::command]
-pub async fn transport_continue_without_nym(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let prefs = state.prefs.lock().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let was_darkirc_active = darkirc_is_active();
-        if was_darkirc_active {
-            let _ = stop_darkirc();
-            wait_for_darkirc_idle(Duration::from_secs(5));
-        }
-        ffi_transport_continue_without_nym();
-        if was_darkirc_active {
-            restart_darkirc_for_prefs(&app, &prefs)?;
-        }
-        Ok::<_, String>(transport_snapshot_json())
-    })
-    .await
-    .map_err(|e| format!("Transport override interrupted: {e}"))?
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmKeypairDto {
     pub public_b58: String,
-}
-
-fn load_dm_secret() -> Result<Vec<u8>, String> {
-    let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
-    let keys = crate::dm_store::load(&wallet_pass)
-        .map_err(map_err)?
-        .ok_or_else(|| "No DM key on this profile".to_string())?;
-    bs58_decode(&keys.secret_b58)
 }
 
 #[tauri::command]
@@ -1273,20 +1150,6 @@ pub fn dm_contacts_migrate(
         crate::dm_store::migrate_legacy_contacts(&wallet_pass, legacy).map_err(map_err)?;
     sync_dm_contacts_to_ffi(&wallet_pass)?;
     Ok(contacts)
-}
-
-#[tauri::command]
-pub fn dm_encrypt(their_public_b58: String, plaintext: String) -> Result<String, String> {
-    let my_secret = Zeroizing::new(load_dm_secret()?);
-    let their_public = bs58_decode(&their_public_b58)?;
-    chacha_encrypt_dm(my_secret.to_vec(), their_public, plaintext).map_err(ffi_err)
-}
-
-#[tauri::command]
-pub fn dm_decrypt(their_public_b58: String, ciphertext_b58: String) -> Result<String, String> {
-    let my_secret = Zeroizing::new(load_dm_secret()?);
-    let their_public = bs58_decode(&their_public_b58)?;
-    chacha_decrypt_dm(my_secret.to_vec(), their_public, ciphertext_b58).map_err(ffi_err)
 }
 
 fn bs58_decode(s: &str) -> Result<Vec<u8>, String> {
@@ -2012,17 +1875,6 @@ pub async fn set_network(
             network.as_str()
         )
     })?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_lwd_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
-    validate_lwd_url(&url)?;
-    let mut prefs = state.prefs.lock().clone();
-    prefs.lightwallet_url = url;
-    save_prefs(&prefs).map_err(map_err)?;
-    *state.prefs.lock() = prefs;
-    close_wallet_and_clear_session(&state);
     Ok(())
 }
 

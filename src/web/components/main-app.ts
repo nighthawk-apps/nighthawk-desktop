@@ -14,13 +14,17 @@ export class MainApp extends LitElement {
     | "ready" = "loading";
   @state() private activeTab = "chat";
   @state() private transferTab: "request" | "receive" | "send" = "receive";
-  @state() private settingsTitle = "Settings";
+  @state() private settingsMode: "settings" | "chat" = "settings";
   @state() private network = "testnet";
   @state() private sync = "";
   @state() private mining = "";
   @state() private error = "";
   @state() private screensReady = false;
+  @state() private localeTick = 0;
   private syncTimer?: number;
+  private onLocale = () => {
+    this.localeTick++;
+  };
 
   static styles = css`
     :host {
@@ -73,6 +77,7 @@ export class MainApp extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
     this.phase = "loading";
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     let exists = false;
@@ -101,6 +106,7 @@ export class MainApp extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
     if (this.syncTimer) {
       window.clearInterval(this.syncTimer);
       this.syncTimer = undefined;
@@ -157,8 +163,8 @@ export class MainApp extends LitElement {
     this.screensReady = true;
   }
 
-  private openSettings(title = "Settings") {
-    this.settingsTitle = title;
+  private openSettings(mode: "settings" | "chat" = "settings") {
+    this.settingsMode = mode;
     this.activeTab = "settings";
   }
 
@@ -178,7 +184,9 @@ export class MainApp extends LitElement {
         ></mine-screen>`;
       case "settings":
         return html`<settings-screen
-          .screenTitle=${this.settingsTitle}
+          .screenTitle=${this.settingsMode === "chat"
+            ? t("chat.settings")
+            : t("nav.settings")}
           @prefs-changed=${async () => {
             const p = await api.getPrefs();
             this.network = p.network;
@@ -200,17 +208,18 @@ export class MainApp extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     if (this.phase === "loading") {
       return html`<div class="center">
-        Starting Nighthawk…
+        ${t("app.starting")}
         ${this.error ? html`<p class="err">${this.error}</p>` : null}
       </div>`;
     }
     if (this.phase === "unlock-error") {
       return html`<div class="center">
-        <p class="err">Could not open the existing wallet.</p>
+        <p class="err">${t("wallet.could_not_open")}</p>
         ${this.error ? html`<p class="err">${this.error}</p>` : null}
-        <button @click=${() => this.retryUnlock()}>Retry</button>
+        <button @click=${() => this.retryUnlock()}>${t("common.retry")}</button>
       </div>`;
     }
     if (this.phase === "onboarding") {
@@ -234,7 +243,7 @@ export class MainApp extends LitElement {
       <main>
         <chat-screen
           ?hidden=${this.activeTab !== "chat"}
-          @open-chat-settings=${() => this.openSettings("Chat Settings")}
+          @open-chat-settings=${() => this.openSettings("chat")}
           @open-transfer=${(e: CustomEvent<"request" | "receive" | "send">) => {
             this.transferTab = e.detail;
             this.activeTab = "transfer";
@@ -248,7 +257,7 @@ export class MainApp extends LitElement {
           const tab = e.detail as string;
           this.activeTab = tab;
           if (tab === "settings") {
-            this.settingsTitle = t("nav.settings");
+            this.settingsMode = "settings";
           }
         }}
       ></app-nav>

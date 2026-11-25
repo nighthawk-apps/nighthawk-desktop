@@ -4,13 +4,13 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-**3.1.20** (crate / Tauri / `package.json`; same release as Android/iOS 3.01.20). Chat is the tab selected when you open the app. Same product line as the Android and iOS apps. DarkFi pin `191941936` via shared `darkfi-mobile-ffi`. Aligns with Android/iOS 3.01.20, Moonshine 3.1.20, and lightwalletd 0.3.13. Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.1.21** (crate / Tauri / `package.json`; same release as Android/iOS 3.01.21). Chat is the tab selected when you open the app. Same product line as the Android and iOS apps. DarkFi pin `b87318e80` via shared `darkfi-mobile-ffi`. Aligns with Android/iOS 3.01.21, Moonshine 3.1.21, and lightwalletd 0.3.14. Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 - **Lit** UI (Chat · Wallet · DEX · **DAO** · Mine · Settings). Wallet actions are **Request · Receive · Send**.
 - **Tauri 2** Rust host
 - Same **`darkfi-mobile-ffi`** UniFFI crate as Android (upstream `drk` transfer, trial-decrypt sync, DarkIRC, send/receive). Sent-tx session cache is FIFO-capped (10,000; updates do not refresh eviction). Reorg UI `txs_affected` is the wallet history row count (`block_height > rewind`), not CLI log-line length.
 - **Instant sync & checkpoints:** authenticated `TreeState` restore, real birthday clamping, UnifOMR pipelining, and ZKAS caching (see [docs/instant-sync-strategy.md](docs/instant-sync-strategy.md))
-- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `191941936` pays fees from tx-local change when that output covers the fee
+- **Proto version lockstep:** the shared Android FFI expects lightwalletd proto **2.1.0**. A major mismatch sets `protoVersionMismatch` and the wallet screen shows a warning banner. DarkFi pin `b87318e80` pays fees from tx-local change when that output covers the fee
 - Local **vault** (`vault.dat` AES-256-GCM; master key in the **OS keychain** — macOS Keychain / Windows Credential Manager / Linux Secret Service) and keychain-backed encrypted **address book** (`addrbook.db`; fails closed without plaintext disk fallback and preserves exact-case Base58 addresses). **Auto-unlock / no app PIN** on desktop is an intentional design decision; treat the desktop user account and OS keychain as the unlock boundary.
 - Separate data dirs per **testnet / mainnet**, plus optional **multi-wallet** profiles
 - Product surface: tokens, memos, DAO, Arti Tor, DarkIRC E2E DM (with in-memory FFI DM contact registration via `register_dm_contact` / `clear_dm_contacts`, keeping DM keys out of plaintext SQLite), address book, and verified in-chat payment receipts (`CHAT_RECEIPT_EVENT`); light-sync polls continuously from the `main-app` shell across tabs, and **Send** displays **Broadcasted** only after lightwalletd confirms the transaction in the mempool
@@ -131,7 +131,11 @@ Changing LWD URL, TLS pin, Tor, or network closes the open wallet handle — reo
 
 Unlock wallet → Mine → set threads → Start. Payouts go to `primary_deposit_address`. Stratum URL is editable in Settings.
 
+## Windows runtime notes
+
+Nighthawk Desktop only invokes outbound client paths in `darkfi-mobile-ffi` (gRPC lightwallet sync + outbound DarkIRC P2P client). The server-side POSIX `libc::E*` accept loops in upstream `darkfi` (`net/acceptor.rs`, `rpc/server.rs`, and `bin/darkirc/src/irc/server.rs`) are **not reachable** from Desktop. In the outbound TCP dialer (`net/transport/tcp.rs`), non-blocking `connect()` checks both `libc::EINPROGRESS` and `io::ErrorKind::WouldBlock` (which Rust maps from `WSAEWOULDBLOCK` on Windows). The only minor Windows-specific quirk in upstream `darkfi` is `net/connector.rs` checking `libc::ENETUNREACH` rather than `WSAENETUNREACH` for its IPv6-availability cache; on IPv4-only Windows hosts using clearnet Direct mode, IPv6 seed addresses fail cleanly and fall back to IPv4 (Tor and Nym modes dial local IPv4 `127.0.0.1` SOCKS5 proxies directly).
+
 ## Known issues
 
 1. Experimental UnifOMR is **off** by default (padded trial decryption). Clue-less payments from upstream `drk` or Moonshine without UnifOMR sync via trial decrypt. Turning UnifOMR on requires both wallets registered on the same lightwalletd.
-2. `git.dark.fi` returns HTTP 504. Do not clone DarkFi or its git deps from there. Use the Android `third_party/darkfi` pin (`191941936`) and the GitLab / Codeberg / GitHub mirrors listed under Build.
+2. `git.dark.fi` returns HTTP 504. Do not clone DarkFi or its git deps from there. Use the Android `third_party/darkfi` pin (`b87318e80`) and the GitLab / Codeberg / GitHub mirrors listed under Build.

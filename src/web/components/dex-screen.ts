@@ -53,9 +53,7 @@ export class DexScreen extends LitElement {
     return html`
       <h2 class="screen-title">${t("nav.dex")}</h2>
       <p class="subtitle">${t("common.coming_soon")}</p>
-      <p class="body">
-        The DarkFi DEX will live here. Send, receive, and request stay on Wallet.
-      </p>
+      <p class="body">${t("dex.description")}</p>
     `;
   }
 }

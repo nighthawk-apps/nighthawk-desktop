@@ -1,5 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { t } from "../i18n";
 import "./send-flow";
 import "./receive-flow";
 import "./request-flow";
@@ -10,6 +11,21 @@ type TransferTab = "request" | "receive" | "send";
 export class TransferFlow extends LitElement {
   @property({ attribute: false }) initialTab: TransferTab = "receive";
   @state() private tab: TransferTab = "receive";
+  @state() private localeTick = 0;
+
+  private onLocale = () => {
+    this.localeTick++;
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("nh-locale-changed", this.onLocale);
+  }
+
+  override disconnectedCallback() {
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    super.disconnectedCallback();
+  }
 
   static styles = css`
     :host {
@@ -49,6 +65,7 @@ export class TransferFlow extends LitElement {
   }
 
   render() {
+    void this.localeTick;
     // Wallet hub order: Request → Receive → Send
     return html`
       <div class="tabs">
@@ -56,19 +73,19 @@ export class TransferFlow extends LitElement {
           class=${this.tab === "request" ? "active" : ""}
           @click=${() => (this.tab = "request")}
         >
-          Request
+          ${t("nav.request")}
         </button>
         <button
           class=${this.tab === "receive" ? "active" : ""}
           @click=${() => (this.tab = "receive")}
         >
-          Receive
+          ${t("nav.receive")}
         </button>
         <button
           class=${this.tab === "send" ? "active" : ""}
           @click=${() => (this.tab = "send")}
         >
-          Send
+          ${t("nav.send")}
         </button>
       </div>
       ${this.tab === "send"
