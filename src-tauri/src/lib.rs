@@ -12,9 +12,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A normal launch stays quiet. Stderr from a desktop app is collected by
+    // the OS console. Set RUST_LOG to opt in while debugging.
+    let default_filter = if cfg!(debug_assertions) { "info" } else { "off" };
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| default_filter.into()),
         )
         .try_init();
 
