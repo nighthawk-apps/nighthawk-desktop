@@ -16,6 +16,15 @@ export function parseDrkAtomic(amount: string): bigint | null {
   return atomic;
 }
 
+/** Decimal integer from Tauri. Atomic balances cross IPC as strings so they
+ *  stay exact past `Number.MAX_SAFE_INTEGER`. */
+export function parseAtomicDecimal(raw: string | bigint): bigint | null {
+  if (typeof raw === "bigint") return raw;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) return null;
+  return BigInt(trimmed);
+}
+
 export function formatDrkAtomic(atomic: number | bigint): string {
   const v = typeof atomic === "bigint" ? atomic : BigInt(Math.trunc(atomic));
   const neg = v < 0n;
@@ -31,9 +40,13 @@ export function isValidDrkAmount(amount: string): boolean {
   return parseDrkAtomic(amount) !== null;
 }
 
-export type SendBalance =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type SendBalanceCode =
+  | "insufficient_drk_amount_and_fee"
+  | "unknown_token"
+  | "insufficient_token"
+  | "insufficient_drk_fee";
+
+export type SendBalance = { ok: true } | { ok: false; code: SendBalanceCode };
 
 /** Same rule as Android: an unknown token id is not DRK, and a custom token
  *  still needs a separate DRK balance for the fee. */
@@ -54,18 +67,18 @@ export function evaluateSendBalance(input: {
   if (native) {
     const required = input.amountAtomic + input.feeAtomic;
     if (input.drkAtomic < required) {
-      return { ok: false, reason: "Not enough DRK for the amount and fee" };
+      return { ok: false, code: "insufficient_drk_amount_and_fee" };
     }
     return { ok: true };
   }
   if (input.tokenAtomic === null) {
-    return { ok: false, reason: "That token is not in this wallet" };
+    return { ok: false, code: "unknown_token" };
   }
   if (input.tokenAtomic < input.amountAtomic) {
-    return { ok: false, reason: "Not enough of the selected token" };
+    return { ok: false, code: "insufficient_token" };
   }
   if (input.drkAtomic < input.feeAtomic) {
-    return { ok: false, reason: "Not enough DRK to pay the fee" };
+    return { ok: false, code: "insufficient_drk_fee" };
   }
   return { ok: true };
 }

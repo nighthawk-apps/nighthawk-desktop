@@ -109,7 +109,8 @@ export interface TxRecord {
 export interface TokenBalance {
   tokenId: string;
   displayLabel: string | null;
-  balanceAtomic: number;
+  /** Atomic units as a decimal string (may exceed Number.MAX_SAFE_INTEGER). */
+  balanceAtomic: string;
 }
 
 export interface MintAuthority {
@@ -234,7 +235,7 @@ export const api = {
   /** Open existing vault (no PIN). */
   openWallet: () => invokeCmd<void>("open_wallet"),
 
-  walletBalance: () => invokeCmd<number>("wallet_balance"),
+  walletBalance: () => invokeCmd<string>("wallet_balance"),
   walletAddress: () => invokeCmd<string>("wallet_address"),
   walletAddresses: () => invokeCmd<string[]>("wallet_addresses"),
   walletRefresh: () => invokeCmd<SyncSnapshot>("wallet_refresh"),

@@ -33,6 +33,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nighthawk-apps/nighthawk-android-wallet
+          # Main CI tracks nighthawk-dark on purpose, while release.yml is pinned.
           ref: nighthawk-dark
           path: android-wallet
           submodules: recursive

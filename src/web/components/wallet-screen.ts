@@ -11,7 +11,7 @@ import {
   type TxRecord,
 } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { formatDrkAtomic, isValidDrkAmount } from "../lib/amount";
+import { formatDrkAtomic, isValidDrkAmount, parseAtomicDecimal } from "../lib/amount";
 import {
   formatLightSyncBanner,
   formatLightSyncMethod,
@@ -21,7 +21,7 @@ import { t } from "../i18n";
 
 @customElement("wallet-screen")
 export class WalletScreen extends LitElement {
-  @state() private balance = 0;
+  @state() private balance = 0n;
   @state() private address = "";
   @state() private sync = "";
   @state() private syncDetail: LightSyncState | null = null;
@@ -54,7 +54,8 @@ export class WalletScreen extends LitElement {
     void api
       .walletBalance()
       .then((b) => {
-        this.balance = b;
+        const parsed = parseAtomicDecimal(b);
+        if (parsed !== null) this.balance = parsed;
       })
       .catch(() => {
         /* ignore transient balance poll error */
@@ -321,7 +322,7 @@ export class WalletScreen extends LitElement {
   private async reload() {
     this.error = "";
     try {
-      this.balance = await api.walletBalance();
+      this.balance = parseAtomicDecimal(await api.walletBalance()) ?? 0n;
       this.address = await api.walletAddress();
       const snap = await api.walletLightSync();
       this.applySync(snap);
@@ -581,7 +582,7 @@ export class WalletScreen extends LitElement {
                 (tok) => html`
                   <div class="token">
                     <span>${tok.displayLabel || `${tok.tokenId.slice(0, 16)}…`}</span>
-                    <span>${formatDrkAtomic(tok.balanceAtomic)}</span>
+                    <span>${formatDrkAtomic(parseAtomicDecimal(tok.balanceAtomic) ?? 0n)}</span>
                   </div>
                 `,
               )}

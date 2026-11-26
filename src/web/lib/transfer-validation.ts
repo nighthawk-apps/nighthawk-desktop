@@ -1,6 +1,7 @@
 import {
   evaluateSendBalance,
   isValidDrkAmount,
+  parseAtomicDecimal,
   parseDrkAtomic,
 } from "./amount.ts";
 import { spendReady, type LightSyncState, type TokenBalance } from "./api.ts";
@@ -78,7 +79,7 @@ export function validateSendSubmission(input: {
   memo?: string;
   tokenId?: string;
   tokens: TokenBalance[];
-  drkBalanceAtomic: number | bigint;
+  drkBalanceAtomic: string | bigint;
   estimatedFeeAtomic?: number | bigint | null;
 }): SendSubmissionValidation {
   const base = validateFeeEstimate(input);
@@ -95,35 +96,44 @@ export function validateSendSubmission(input: {
         ? input.estimatedFeeAtomic
         : BigInt(Math.trunc(input.estimatedFeeAtomic))
       : DEFAULT_SCHEDULE_FEE_ATOMIC;
-  const drkAtomic =
-    typeof input.drkBalanceAtomic === "bigint"
-      ? input.drkBalanceAtomic
-      : BigInt(Math.trunc(input.drkBalanceAtomic));
+  const drkAtomic = parseAtomicDecimal(input.drkBalanceAtomic);
+  if (drkAtomic === null) {
+    return { ok: false, code: "invalid_amount" };
+  }
 
   const tokenId = base.tokenId ?? "";
   const token = tokenId
     ? input.tokens.find((t) => t.tokenId === tokenId)
     : undefined;
+  let tokenAtomic: bigint | null = null;
+  if (tokenId && token) {
+    const parsed = parseAtomicDecimal(token.balanceAtomic);
+    if (parsed === null) {
+      return { ok: false, code: "invalid_amount" };
+    }
+    tokenAtomic = parsed;
+  }
   const check = evaluateSendBalance({
     amountAtomic,
     tokenId,
     tokenLabel: token?.displayLabel,
-    tokenAtomic: tokenId && token ? BigInt(Math.trunc(token.balanceAtomic)) : null,
+    tokenAtomic,
     drkAtomic,
     feeAtomic,
   });
 
   if (!check.ok) {
-    if (check.reason.includes("amount and fee")) {
-      return { ok: false, code: "insufficient_drk_amount_and_fee" };
+    switch (check.code) {
+      case "insufficient_drk_amount_and_fee":
+      case "unknown_token":
+      case "insufficient_token":
+      case "insufficient_drk_fee":
+        return { ok: false, code: check.code };
+      default: {
+        const unexpected: never = check.code;
+        return unexpected;
+      }
     }
-    if (check.reason.includes("not in this wallet")) {
-      return { ok: false, code: "unknown_token" };
-    }
-    if (check.reason.includes("selected token")) {
-      return { ok: false, code: "insufficient_token" };
-    }
-    return { ok: false, code: "insufficient_drk_fee" };
   }
 
   return {

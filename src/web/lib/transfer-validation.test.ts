@@ -1,3 +1,4 @@
+import { parseAtomicDecimal } from "./amount.ts";
 import type { LightSyncState, TokenBalance } from "./api.ts";
 import { MAX_PAYMENT_MEMO_BYTES, utf8ByteLength } from "./payment-uri.ts";
 import {
@@ -40,7 +41,7 @@ const mismatch = validateSendSubmission({
   recipient: ADDR,
   amount: "1",
   tokens: [],
-  drkBalanceAtomic: 500_000_000,
+  drkBalanceAtomic: "500000000",
 });
 if (mismatch.ok || mismatch.code !== "not_spend_ready") {
   throw new Error(`expected proto mismatch to block send: ${JSON.stringify(mismatch)}`);
@@ -78,7 +79,7 @@ const oldFeeTrap = validateSendSubmission({
   recipient: ADDR,
   amount: "1",
   tokens: [],
-  drkBalanceAtomic: 105_000_000,
+  drkBalanceAtomic: "105000000",
 });
 if (oldFeeTrap.ok || oldFeeTrap.code !== "insufficient_drk_amount_and_fee") {
   throw new Error(`expected insufficient_drk_amount_and_fee for 1.05 DRK balance, got ${JSON.stringify(oldFeeTrap)}`);
@@ -90,7 +91,7 @@ const exactBalanceOk = validateSendSubmission({
   amount: "1",
   memo: "🚀".repeat(80), // 320 UTF-8 bytes -> must truncate to <= 255 bytes cleanly
   tokens: [],
-  drkBalanceAtomic: 105_420_000,
+  drkBalanceAtomic: "105420000",
 });
 if (!exactBalanceOk.ok) {
   throw new Error(`expected exact 1.0542 DRK balance to pass: ${JSON.stringify(exactBalanceOk)}`);
@@ -104,7 +105,7 @@ if (!exactBalanceOk.memo || utf8ByteLength(exactBalanceOk.memo) > MAX_PAYMENT_ME
 
 // 4. Custom token balance & DRK fee enforcement + Degraded caught-up state allowed
 const tokens: TokenBalance[] = [
-  { tokenId: "tok_gold", displayLabel: "GOLD", balanceAtomic: 200_000_000 },
+  { tokenId: "tok_gold", displayLabel: "GOLD", balanceAtomic: "200000000" },
 ];
 
 const customOk = validateSendSubmission({
@@ -113,7 +114,7 @@ const customOk = validateSendSubmission({
   amount: "1.5",
   tokenId: "tok_gold",
   tokens,
-  drkBalanceAtomic: 5_420_000,
+  drkBalanceAtomic: "5420000",
 });
 if (!customOk.ok || customOk.amountAtomic !== 150_000_000n) {
   throw new Error(`expected custom token send to pass on Degraded caught-up tip: ${JSON.stringify(customOk)}`);
@@ -125,7 +126,7 @@ const customLowDrkFee = validateSendSubmission({
   amount: "1.5",
   tokenId: "tok_gold",
   tokens,
-  drkBalanceAtomic: 5_000_000,
+  drkBalanceAtomic: "5000000",
 });
 if (customLowDrkFee.ok || customLowDrkFee.code !== "insufficient_drk_fee") {
   throw new Error(`expected insufficient_drk_fee, got ${JSON.stringify(customLowDrkFee)}`);
@@ -137,7 +138,7 @@ const customLowToken = validateSendSubmission({
   amount: "3",
   tokenId: "tok_gold",
   tokens,
-  drkBalanceAtomic: 50_000_000,
+  drkBalanceAtomic: "50000000",
 });
 if (customLowToken.ok || customLowToken.code !== "insufficient_token") {
   throw new Error(`expected insufficient_token, got ${JSON.stringify(customLowToken)}`);
@@ -149,7 +150,7 @@ const unknownToken = validateSendSubmission({
   amount: "1",
   tokenId: "tok_missing",
   tokens,
-  drkBalanceAtomic: 50_000_000,
+  drkBalanceAtomic: "50000000",
 });
 if (unknownToken.ok || unknownToken.code !== "unknown_token") {
   throw new Error(`expected unknown_token, got ${JSON.stringify(unknownToken)}`);
@@ -161,11 +162,40 @@ const customFee = validateSendSubmission({
   recipient: ADDR,
   amount: "1",
   tokens: [],
-  drkBalanceAtomic: 110_000_000,
+  drkBalanceAtomic: "110000000",
   estimatedFeeAtomic: 15_000_000,
 });
 if (customFee.ok || customFee.code !== "insufficient_drk_amount_and_fee") {
   throw new Error(`expected higher estimatedFeeAtomic to reject send: ${JSON.stringify(customFee)}`);
+}
+
+// Decimal strings stay exact past Number.MAX_SAFE_INTEGER (2^53+1).
+const precise = parseAtomicDecimal("9007199254740993");
+if (precise !== 9007199254740993n) {
+  throw new Error(`atomic decimal lost precision: ${precise}`);
+}
+if (BigInt(Math.trunc(Number("9007199254740993"))) === precise) {
+  throw new Error("fixture must sit past Number.MAX_SAFE_INTEGER");
+}
+const preciseSend = validateSendSubmission({
+  sync: syncedSnap(),
+  recipient: ADDR,
+  amount: "1",
+  tokens: [],
+  drkBalanceAtomic: "9007199254740993",
+});
+if (!preciseSend.ok) {
+  throw new Error(`expected exact atomic string balance to pass: ${JSON.stringify(preciseSend)}`);
+}
+const badAtomic = validateSendSubmission({
+  sync: syncedSnap(),
+  recipient: ADDR,
+  amount: "1",
+  tokens: [],
+  drkBalanceAtomic: "1.5",
+});
+if (badAtomic.ok || badAtomic.code !== "invalid_amount") {
+  throw new Error(`expected non-integer atomic balance to fail: ${JSON.stringify(badAtomic)}`);
 }
 
 console.log("transfer-validation.test.ts ok");

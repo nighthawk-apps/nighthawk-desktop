@@ -54,7 +54,7 @@ const unknown = evaluateSendBalance({
   drkAtomic: 50_000_000n,
   feeAtomic: 5_000_000n,
 });
-if (unknown.ok || !unknown.reason.includes("not in this wallet")) {
+if (unknown.ok || unknown.code !== "unknown_token") {
   throw new Error("unknown token must not spend DRK");
 }
 
@@ -65,7 +65,7 @@ const feeShort = evaluateSendBalance({
   drkAtomic: 1n,
   feeAtomic: 5_000_000n,
 });
-if (feeShort.ok || !feeShort.reason.includes("fee")) {
+if (feeShort.ok || feeShort.code !== "insufficient_drk_fee") {
   throw new Error("custom token must require a DRK fee");
 }
 
@@ -77,6 +77,6 @@ const drkRow = evaluateSendBalance({
   drkAtomic: 10_000_000n,
   feeAtomic: 5_000_000n,
 });
-if (drkRow.ok || !drkRow.reason.includes("amount and fee")) {
+if (drkRow.ok || drkRow.code !== "insufficient_drk_amount_and_fee") {
   throw new Error("a DRK portfolio row must reserve the fee");
 }

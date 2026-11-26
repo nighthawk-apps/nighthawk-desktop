@@ -9,7 +9,7 @@ import {
   type LightSyncState,
   type TokenBalance,
 } from "../lib/api";
-import { formatDrkAtomic } from "../lib/amount";
+import { formatDrkAtomic, parseAtomicDecimal } from "../lib/amount";
 import {
   applyRecipientPaste,
   MAX_PAYMENT_MEMO_BYTES,
@@ -338,7 +338,7 @@ export class SendFlow extends LitElement {
   private async send() {
     this.error = "";
     this.result = "";
-    let drkAtomic: number;
+    let drkAtomic: string;
     try {
       this.tokens = await api.listTokenBalances();
       drkAtomic = await api.walletBalance();
@@ -427,7 +427,7 @@ export class SendFlow extends LitElement {
           (tok) => html`
             <option value=${tok.tokenId}>
               ${tok.displayLabel || tok.tokenId.slice(0, 12)}…
-              (${formatDrkAtomic(tok.balanceAtomic)})
+              (${formatDrkAtomic(parseAtomicDecimal(tok.balanceAtomic) ?? 0n)})
             </option>
           `,
         )}

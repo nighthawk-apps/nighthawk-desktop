@@ -7,19 +7,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-linux:
     name: Build Linux (ubuntu-22.04)
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Checkout Android wallet for darkfi-mobile-ffi
         uses: actions/checkout@v4
         with:
           repository: nighthawk-apps/nighthawk-android-wallet
-          ref: nighthawk-dark
+          # The next desktop release updates this SHA to the Android commit it was built against.
+          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
           path: android-wallet
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
@@ -82,13 +85,16 @@ jobs:
   build-macos:
     name: Build macOS (aarch64 + universal)
     runs-on: macos-15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Checkout Android wallet for darkfi-mobile-ffi
         uses: actions/checkout@v4
         with:
           repository: nighthawk-apps/nighthawk-android-wallet
-          ref: nighthawk-dark
+          # The next desktop release updates this SHA to the Android commit it was built against.
+          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
           path: android-wallet
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
@@ -149,13 +155,16 @@ jobs:
   build-windows:
     name: Build Windows (x64 MSVC)
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Checkout Android wallet for darkfi-mobile-ffi
         uses: actions/checkout@v4
         with:
           repository: nighthawk-apps/nighthawk-android-wallet
-          ref: nighthawk-dark
+          # The next desktop release updates this SHA to the Android commit it was built against.
+          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
           path: android-wallet
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
@@ -207,6 +216,8 @@ jobs:
     name: Create Draft Release & SHA256SUMS
     needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all platform artifacts
         uses: actions/download-artifact@v4

@@ -4,7 +4,9 @@
 //! the OS keychain (macOS Keychain / Windows Credential Manager / Linux
 //! SecretService) via the `keyring` crate. If the keychain is unavailable,
 //! New vaults require the OS keychain. Legacy `vault.key` files are still
-//! readable. The static PBKDF2 constant is used only to open v2 vaults.
+//! readable. The static PBKDF2 constant is used only to open vaults sealed
+//! with it. A successful open rewrites those vaults through the keychain
+//! path. If that rewrite fails, the previous files are restored.
 //!
 //! The app opens the wallet automatically on launch — no unlock screen.
 
@@ -29,7 +31,8 @@ const META_VERSION: u32 = 3;
 /// Legacy version for migration detection.
 const LEGACY_META_VERSION: u32 = 2;
 const PBKDF2_ITERS: u32 = 100_000;
-/// Legacy fallback — only used when keyring is unavailable.
+/// Legacy static secret. Reads still try it so an old vault can be opened.
+/// A successful open rewrites the vault with the OS keychain key.
 const DESKTOP_VAULT_SECRET: &str = "nighthawk-desktop-local-vault-v2";
 
 const KEYRING_SERVICE: &str = "com.nighthawkapps.desktop.vault";
@@ -248,18 +251,19 @@ fn derive_key_for_write(salt: &[u8]) -> Result<([u8; 32], bool, bool)> {
     ))
 }
 
-fn derive_key_for_read(salt: &[u8], meta: &VaultMeta) -> [u8; 32] {
+/// Second value is true when the key is the static PBKDF2 secret.
+fn derive_key_for_read(salt: &[u8], meta: &VaultMeta) -> ([u8; 32], bool) {
     if meta.keychain_backed
         && let Some(master) = read_keychain_master_key()
     {
-        return mix_master(&master, salt);
+        return (mix_master(&master, salt), false);
     }
     if meta.file_backed
         && let Some(master) = file_master_key()
     {
-        return mix_master(&master, salt);
+        return (mix_master(&master, salt), false);
     }
-    derive_key_pbkdf2(salt)
+    (derive_key_pbkdf2(salt), true)
 }
 
 fn seal(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -348,56 +352,139 @@ fn write_vault_files(mnemonic: &[String], wallet_pass: &str, overwrite: bool) ->
     Ok(())
 }
 
-fn decrypt_payload() -> Result<VaultPayload> {
+struct OpenedVault {
+    payload: VaultPayload,
+    /// True when the key that opened the vault was `derive_key_pbkdf2`.
+    legacy_pbkdf2: bool,
+}
+
+fn read_sealed_payload(key: &[u8; 32]) -> Result<VaultPayload> {
+    let blob = fs::read(data_path()).context("read vault.dat")?;
+    let plain = Zeroizing::new(open_seal(key, &blob)?);
+    serde_json::from_slice(&plain).context("parse vault payload")
+}
+
+/// Fingerprint match means this is the key. A later decrypt error is fatal
+/// and must not fall through to another candidate.
+fn open_if_key_matches(
+    key: [u8; 32],
+    meta: &VaultMeta,
+    legacy_pbkdf2: bool,
+) -> Result<Option<OpenedVault>> {
+    if !key_matches_meta(&key, &meta.key_hash) {
+        return Ok(None);
+    }
+    Ok(Some(OpenedVault {
+        payload: read_sealed_payload(&key)?,
+        legacy_pbkdf2,
+    }))
+}
+
+fn decrypt_payload() -> Result<OpenedVault> {
     let meta = read_meta()?.ok_or_else(|| anyhow!("No wallet on this device"))?;
     let salt = hex::decode(&meta.salt_hex).context("bad salt")?;
-    let key = derive_key_for_read(&salt, &meta);
-    if !key_matches_meta(&key, &meta.key_hash) {
-        // Lost keychain / file key: try the other sources, then legacy PBKDF2.
-        // Never call ensure_keychain_master_key here — that would mint a
-        // fresh key that cannot open this vault.
-        for candidate in [
-            read_keychain_master_key().map(|m| mix_master(&m, &salt)),
-            file_master_key().map(|m| mix_master(&m, &salt)),
-            Some(derive_key_pbkdf2(&salt)),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if key_matches_meta(&candidate, &meta.key_hash) {
-                let blob = fs::read(data_path()).context("read vault.dat")?;
-                let plain = open_seal(&candidate, &blob)?;
-                return serde_json::from_slice(&plain).context("parse vault payload");
-            }
+    let (key, legacy) = derive_key_for_read(&salt, &meta);
+    if let Some(opened) = open_if_key_matches(key, &meta, legacy)? {
+        return Ok(opened);
+    }
+    // Lost keychain / file key: try the other sources, then legacy PBKDF2.
+    // Never call ensure_keychain_master_key here — that would mint a
+    // fresh key that cannot open this vault.
+    let candidates = [
+        read_keychain_master_key().map(|m| (mix_master(&m, &salt), false)),
+        file_master_key().map(|m| (mix_master(&m, &salt), false)),
+        Some((derive_key_pbkdf2(&salt), true)),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        let (candidate_key, candidate_legacy) = candidate;
+        if let Some(opened) = open_if_key_matches(candidate_key, &meta, candidate_legacy)? {
+            return Ok(opened);
         }
-        if meta.keychain_backed && read_keychain_master_key().is_none() {
-            return Err(anyhow!(
-                "Vault key missing from OS keychain — wipe local data and \
-                 create or restore the wallet again"
+    }
+    if meta.keychain_backed && read_keychain_master_key().is_none() {
+        return Err(anyhow!(
+            "Vault key missing from OS keychain — wipe local data and \
+             create or restore the wallet again"
+        ));
+    }
+    Err(anyhow!("Corrupt vault"))
+}
+
+fn legacy_migration_failure(err: &str, restored: bool) -> String {
+    let tail = if restored {
+        "The existing vault was left unchanged"
+    } else {
+        "Restoring the previous vault files also failed"
+    };
+    format!(
+        "Vault unlocked with the legacy key, but migrating it to the OS keychain failed: {err}. \
+         {tail}"
+    )
+}
+
+/// Rewrite a vault that opened with the static PBKDF2 secret. On failure the
+/// previous `vault.dat` and `vault.meta.json` bytes are put back.
+fn migrate_legacy_vault_files<F>(mnemonic: &[String], wallet_pass: &str, write: F) -> Option<String>
+where
+    F: FnOnce(&[String], &str) -> Result<()>,
+{
+    let old_data = match fs::read(data_path()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Some(legacy_migration_failure(
+                &format!("could not read vault.dat ({e})"),
+                true,
             ));
         }
-        return Err(anyhow!("Corrupt vault"));
+    };
+    let old_meta = match fs::read(meta_path()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Some(legacy_migration_failure(
+                &format!("could not read vault meta ({e})"),
+                true,
+            ));
+        }
+    };
+    match write(mnemonic, wallet_pass) {
+        Ok(()) => None,
+        Err(e) => {
+            let data_ok = crate::paths::write_atomic(&data_path(), &old_data, true).is_ok();
+            let meta_ok = crate::paths::write_atomic(&meta_path(), &old_meta, true).is_ok();
+            Some(legacy_migration_failure(&e.to_string(), data_ok && meta_ok))
+        }
     }
-    let blob = fs::read(data_path()).context("read vault.dat")?;
-    let plain = Zeroizing::new(open_seal(&key, &blob)?);
-    serde_json::from_slice(&plain).context("parse vault payload")
 }
 
 fn lock_session() {
     *session().lock() = None;
 }
 
-fn unlock_into_session() -> Result<()> {
-    let payload = decrypt_payload()?;
+fn unlock_into_session() -> Result<Option<String>> {
+    let opened = decrypt_payload()?;
+    let legacy = opened.legacy_pbkdf2;
+    let mnemonic: Vec<String> = opened
+        .payload
+        .mnemonic
+        .split_whitespace()
+        .map(|w| w.to_string())
+        .collect();
+    let wallet_pass = opened.payload.wallet_pass.clone();
+    drop(opened);
     *session().lock() = Some(Session {
-        mnemonic: payload
-            .mnemonic
-            .split_whitespace()
-            .map(|w| w.to_string())
-            .collect(),
-        wallet_pass: payload.wallet_pass.clone(),
+        mnemonic: mnemonic.clone(),
+        wallet_pass: wallet_pass.clone(),
     });
-    Ok(())
+    if !legacy {
+        return Ok(None);
+    }
+    // Keep the PBKDF2 read path until this rewrite succeeds. A failed rewrite
+    // restores the previous files and still leaves the session unlocked.
+    Ok(migrate_legacy_vault_files(
+        &mnemonic,
+        &wallet_pass,
+        |words, pass| write_vault_files(words, pass, true),
+    ))
 }
 
 // --- Legacy keyring cleanup (no migration; PIN path is gone) ---
@@ -467,7 +554,10 @@ pub fn vault_ready() -> bool {
 }
 
 /// Load secrets into the in-memory session (no user PIN).
-pub fn unlock_session() -> Result<()> {
+/// `Ok(None)` is a clean unlock. `Ok(Some(warning))` means the session is
+/// unlocked and the legacy vault is still on disk because the keychain
+/// rewrite failed.
+pub fn unlock_session() -> Result<Option<String>> {
     if !vault_ready() {
         return Err(anyhow!(
             "No wallet on this device — create or restore first"
@@ -518,6 +608,7 @@ pub fn wipe_secrets() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn key_fingerprint_is_not_the_raw_key() {
@@ -554,5 +645,116 @@ mod tests {
         let stored = read_keyring_secret(&account).expect("read back after set");
         assert_eq!(stored, key);
         let _ = entry.delete_credential();
+    }
+
+    struct VaultTestRoot {
+        tmp: std::path::PathBuf,
+    }
+
+    impl VaultTestRoot {
+        fn enter() -> Self {
+            let tmp = std::env::temp_dir().join(format!(
+                "nh_vault_migrate_{}_{}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            fs::create_dir_all(&tmp).unwrap();
+            crate::paths::set_wallet_data_root(Some(tmp.clone()));
+            lock_session();
+            Self { tmp }
+        }
+    }
+
+    impl Drop for VaultTestRoot {
+        fn drop(&mut self) {
+            lock_session();
+            delete_vault_key_for_root(&self.tmp);
+            crate::paths::set_wallet_data_root(None);
+            let _ = fs::remove_dir_all(&self.tmp);
+        }
+    }
+
+    fn write_legacy_pbkdf2_vault(mnemonic: &[String], wallet_pass: &str, salt: &[u8; 16]) {
+        let key = derive_key_pbkdf2(salt);
+        let payload = VaultPayload {
+            mnemonic: mnemonic.join(" "),
+            wallet_pass: wallet_pass.to_string(),
+        };
+        let plain = serde_json::to_vec(&payload).unwrap();
+        let sealed = seal(&key, &plain).unwrap();
+        crate::paths::write_atomic(&data_path(), &sealed, true).unwrap();
+        write_meta(&VaultMeta {
+            version: LEGACY_META_VERSION,
+            salt_hex: hex::encode(salt),
+            key_hash: key_fingerprint(&key),
+            keychain_backed: false,
+            file_backed: false,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn legacy_migration_failure_restores_bytes_and_keeps_session() {
+        let _guard = crate::paths::test_wallet_root_guard();
+        let _root = VaultTestRoot::enter();
+        let mnemonic = vec!["alpha".to_string(), "beta".to_string()];
+        let pass = "test-pass";
+        write_legacy_pbkdf2_vault(&mnemonic, pass, &[9u8; 16]);
+        let before_data = fs::read(data_path()).unwrap();
+        let before_meta = fs::read(meta_path()).unwrap();
+        *session().lock() = Some(Session {
+            mnemonic: mnemonic.clone(),
+            wallet_pass: pass.to_string(),
+        });
+
+        let warning = migrate_legacy_vault_files(&mnemonic, pass, |_words, _pass| {
+            fs::write(data_path(), b"truncated").unwrap();
+            Err(anyhow::anyhow!("keychain down"))
+        });
+        let warning = warning.expect("migration warning");
+        assert!(warning.contains("keychain down"));
+        assert!(warning.contains("left unchanged"));
+        assert_eq!(fs::read(data_path()).unwrap(), before_data);
+        assert_eq!(fs::read(meta_path()).unwrap(), before_meta);
+        assert_eq!(load_mnemonic().unwrap(), mnemonic);
+        assert_eq!(load_wallet_pass().unwrap(), pass);
+    }
+
+    #[test]
+    fn legacy_pbkdf2_unlock_migrates_or_reports_without_destroying_vault() {
+        let _guard = crate::paths::test_wallet_root_guard();
+        let _root = VaultTestRoot::enter();
+        let mnemonic = vec!["one".to_string(), "two".to_string()];
+        let pass = "wallet-pass";
+        write_legacy_pbkdf2_vault(&mnemonic, pass, &[4u8; 16]);
+        let before_data = fs::read(data_path()).unwrap();
+        let before_meta = fs::read(meta_path()).unwrap();
+
+        let warning = unlock_session().expect("legacy vault decrypts");
+        assert_eq!(load_mnemonic().unwrap(), mnemonic);
+        assert_eq!(load_wallet_pass().unwrap(), pass);
+
+        match warning {
+            None => {
+                let meta = read_meta().unwrap().expect("meta");
+                assert!(meta.keychain_backed);
+                assert!(!meta.file_backed);
+                assert_eq!(meta.version, META_VERSION);
+                let salt = hex::decode(meta.salt_hex).unwrap();
+                let legacy = derive_key_pbkdf2(&salt);
+                assert!(!key_matches_meta(&legacy, &meta.key_hash));
+                lock_session();
+                assert!(unlock_session().unwrap().is_none());
+            }
+            Some(msg) => {
+                assert!(msg.contains("left unchanged"));
+                assert_eq!(fs::read(data_path()).unwrap(), before_data);
+                assert_eq!(fs::read(meta_path()).unwrap(), before_meta);
+                lock_session();
+                let again = unlock_session().expect("fallback still opens");
+                assert!(again.is_some());
+                assert_eq!(load_mnemonic().unwrap(), mnemonic);
+            }
+        }
     }
 }

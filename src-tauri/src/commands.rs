@@ -155,6 +155,18 @@ fn attach_reorg_callback(app: &AppHandle, handle: &DarkfiWalletHandle) {
     handle.set_reorg_callback(Some(cb));
 }
 
+/// SHA-256 leaf pins: one or more 32-byte digests, at most 128 bytes.
+fn decode_tls_pin_bytes(pin: &str) -> Result<Vec<u8>, String> {
+    let bytes = hex::decode(pin.trim()).map_err(|e| format!("TLS pin hex: {e}"))?;
+    if bytes.is_empty() || bytes.len() % 32 != 0 || bytes.len() > 128 {
+        return Err(format!(
+            "TLS pin must be 32–128 bytes in 32-byte pins (64–256 hex chars), got {}",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
 fn build_bootstrap(
     mnemonic: Vec<String>,
     network: Network,
@@ -165,16 +177,7 @@ fn build_bootstrap(
     let tls_pin = match &prefs.lightwallet_tls_pin_sha256 {
         None => None,
         Some(s) if s.trim().is_empty() => None,
-        Some(s) => {
-            let bytes = hex::decode(s.trim()).map_err(|e| format!("TLS pin hex: {e}"))?;
-            if bytes.is_empty() || bytes.len() % 32 != 0 || bytes.len() > 128 {
-                return Err(format!(
-                    "TLS pin must be 32–128 bytes in 32-byte pins (64–256 hex chars), got {}",
-                    bytes.len()
-                ));
-            }
-            Some(bytes)
-        }
+        Some(s) => Some(decode_tls_pin_bytes(s)?),
     };
     Ok(DrkBootstrapConfig {
         network: network.as_str().to_string(),
@@ -325,12 +328,15 @@ pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
     state.prefs.lock().clone()
 }
 
-#[tauri::command]
-pub async fn set_prefs(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    mut prefs: Prefs,
-) -> Result<(), String> {
+fn validate_socks_port(port: u32, label: &str) -> Result<(), String> {
+    if (1..=65535).contains(&port) {
+        Ok(())
+    } else {
+        Err(format!("{label} must be between 1 and 65535"))
+    }
+}
+
+fn validate_prefs_for_save(prefs: &Prefs) -> Result<(), String> {
     if !prefs.lightwallet_url.trim().is_empty() {
         validate_lwd_url(&prefs.lightwallet_url)?;
     }
@@ -342,23 +348,52 @@ pub async fn set_prefs(
     {
         validate_host_port(rpc, "darkfid RPC")?;
     }
+    // `Prefs` stores ports as `u16`, so serde already rejects values above 65535
+    // and negatives. `0` is the in-range value this check still has to refuse.
+    validate_socks_port(u32::from(prefs.tor_socks_port), "Tor SOCKS port")?;
+    validate_socks_port(u32::from(prefs.nym_socks_port), "Nym SOCKS port")?;
+    if prefs.birthday_height < 0 {
+        return Err("birthday height must be zero or positive".into());
+    }
+    if let Some(pin) = &prefs.lightwallet_tls_pin_sha256
+        && !pin.trim().is_empty()
+    {
+        decode_tls_pin_bytes(pin)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_prefs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mut prefs: Prefs,
+) -> Result<(), String> {
+    validate_prefs_for_save(&prefs)?;
     prefs.chat_nick = sanitize_nickname(prefs.chat_nick.trim())?;
-    let old = state.prefs.lock().clone();
-    if !wallets::is_valid_wallet_id(&prefs.active_wallet_id) {
-        return Err("Invalid active wallet profile id".into());
-    }
-    if prefs.active_wallet_id != old.active_wallet_id {
-        return Err("Use the wallet profile switcher to change the active wallet".into());
-    }
-    let transport_changed = old.use_tor != prefs.use_tor
-        || old.tor_socks_port != prefs.tor_socks_port
-        || old.use_nym != prefs.use_nym
-        || old.nym_socks_port != prefs.nym_socks_port
-        || old.network != prefs.network;
-    let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
-        || old.lightwallet_tls_pin_sha256 != prefs.lightwallet_tls_pin_sha256
-        || transport_changed;
-    save_prefs(&prefs).map_err(map_err)?;
+    // Hold the prefs lock across the read, disk write, and memory update.
+    // Drop it before taking the wallet lock or awaiting.
+    let (old, transport_changed, needs_wallet_reopen) = {
+        let mut guard = state.prefs.lock();
+        if !wallets::is_valid_wallet_id(&prefs.active_wallet_id) {
+            return Err("Invalid active wallet profile id".into());
+        }
+        if prefs.active_wallet_id != guard.active_wallet_id {
+            return Err("Use the wallet profile switcher to change the active wallet".into());
+        }
+        let old = guard.clone();
+        let transport_changed = old.use_tor != prefs.use_tor
+            || old.tor_socks_port != prefs.tor_socks_port
+            || old.use_nym != prefs.use_nym
+            || old.nym_socks_port != prefs.nym_socks_port
+            || old.network != prefs.network;
+        let needs_wallet_reopen = old.lightwallet_url != prefs.lightwallet_url
+            || old.lightwallet_tls_pin_sha256 != prefs.lightwallet_tls_pin_sha256
+            || transport_changed;
+        save_prefs(&prefs).map_err(map_err)?;
+        *guard = prefs.clone();
+        (old, transport_changed, needs_wallet_reopen)
+    };
     *state.network.lock() = prefs.network;
     if needs_wallet_reopen {
         // LWD / transport / TLS pin only apply at bootstrap — close the open handle.
@@ -366,7 +401,6 @@ pub async fn set_prefs(
     } else if let Some(handle) = state.wallet.lock().as_ref().cloned() {
         handle.set_strict_omr_only(prefs.strict_omr_only);
     }
-    *state.prefs.lock() = prefs.clone();
 
     if transport_changed {
         let app_clone = app.clone();
@@ -538,14 +572,15 @@ async fn open_existing_wallet(app: &AppHandle, state: &AppState) -> Result<(), S
         return Ok(());
     }
 
-    let (mnemonic, wallet_pass) = tauri::async_runtime::spawn_blocking(move || {
-        secure_store::unlock_session().map_err(map_err)?;
-        let mnemonic = secure_store::load_mnemonic().map_err(map_err)?;
-        let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
-        Ok::<_, String>((mnemonic, wallet_pass))
-    })
-    .await
-    .map_err(|e| format!("Open interrupted: {e}"))??;
+    let (mnemonic, wallet_pass, migration_warning) =
+        tauri::async_runtime::spawn_blocking(move || {
+            let migration_warning = secure_store::unlock_session().map_err(map_err)?;
+            let mnemonic = secure_store::load_mnemonic().map_err(map_err)?;
+            let wallet_pass = secure_store::load_wallet_pass().map_err(map_err)?;
+            Ok::<_, String>((mnemonic, wallet_pass, migration_warning))
+        })
+        .await
+        .map_err(|e| format!("Open interrupted: {e}"))??;
 
     let prefs = state.prefs.lock().clone();
     let network = prefs.network;
@@ -556,6 +591,9 @@ async fn open_existing_wallet(app: &AppHandle, state: &AppState) -> Result<(), S
     attach_reorg_callback(app, &handle);
     *state.wallet.lock() = Some(handle);
     sync_dm_contacts_if_unlocked();
+    if let Some(warning) = migration_warning {
+        return Err(map_err(warning));
+    }
     Ok(())
 }
 
@@ -580,8 +618,13 @@ where
 }
 
 #[tauri::command]
-pub async fn wallet_balance(state: State<'_, AppState>) -> Result<i64, String> {
-    with_wallet_blocking(&state, |w| w.confirmed_balance_atomic().map_err(ffi_err)).await
+pub async fn wallet_balance(state: State<'_, AppState>) -> Result<String, String> {
+    with_wallet_blocking(&state, |w| {
+        w.confirmed_balance_atomic()
+            .map(|atomic| atomic.to_string())
+            .map_err(ffi_err)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -719,7 +762,8 @@ pub async fn send_drk(
 pub struct TokenBalanceDto {
     pub token_id: String,
     pub display_label: Option<String>,
-    pub balance_atomic: i64,
+    /// Decimal string so atomic units survive JSON numbers past 2^53.
+    pub balance_atomic: String,
 }
 
 #[tauri::command]
@@ -733,7 +777,7 @@ pub async fn list_token_balances(
             .map(|t| TokenBalanceDto {
                 token_id: t.token_id,
                 display_label: t.display_label,
-                balance_atomic: t.balance_atomic,
+                balance_atomic: t.balance_atomic.to_string(),
             })
             .collect())
     })
@@ -1539,29 +1583,43 @@ fn xmrig_bin(app: &AppHandle) -> Result<PathBuf, String> {
         .ok();
     let dev_binaries =
         cfg!(debug_assertions).then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
-    let p = resolve_xmrig_candidate(
+    resolve_xmrig_candidate(
         current_exe.as_deref(),
         resource_path.as_deref(),
         dev_binaries.as_deref(),
     )
-    .ok_or_else(|| "bundled xmrig sidecar is missing from the app bundle".to_string())?;
-    verify_xmrig_hash(&p)?;
-    Ok(p)
+    .ok_or_else(|| "bundled xmrig sidecar is missing from the app bundle".to_string())
 }
 
-/// SHA-256 of the xmrig builds shipped in `src-tauri/binaries`.
-fn verify_xmrig_hash(path: &std::path::Path) -> Result<(), String> {
+/// Pre-sign SHA-256 of sidecars under `src-tauri/binaries`.
+///
+/// Triples below are the filename that currently hashes to that digest.
+/// `scripts/fetch-xmrig.sh` does not record hashes. One older digest does not
+/// match any sidecar in the tree.
+const XMRIG_SHA256_ALLOWLIST: &[&str] = &[
+    // aarch64-apple-darwin (xmrig-aarch64-apple-darwin)
+    "f3ec92e5937bc2510e074e28fb1811215f76229fa08067adc5b2e2848fa8e845",
+    // x86_64-apple-darwin (xmrig-x86_64-apple-darwin)
+    "3bf7a353daa4af0f4d2aa4c5a0294fd14d3a330b0abf2e2e4dd23e14650aa527",
+    // No sidecar currently in src-tauri/binaries hashes to this digest.
+    "2378ed17a514a54d06b000f82ea1372d046d79d5cfbdb7ac5ac9a99c22ee2d0b",
+    // x86_64-pc-windows-msvc (xmrig-x86_64-pc-windows-msvc.exe)
+    "6fa80698d7268f6e88aa88c06fb27ee99e1bcee747c2e76911e6206a5b1aeeb3",
+    // x86_64-unknown-linux-gnu (xmrig-x86_64-unknown-linux-gnu)
+    "b20f39fc00d242e706b6c30367ad811c676e0575050a4ec2f30104b696944b49",
+    // universal-apple-darwin, pre-sign lipo of the two apple-darwin sidecars above
+    "3a31f907db0a5b592495eb25b7aae5f952704c0377cb123e9eb233999d185e8b",
+];
+
+fn file_sha256_hex(path: &std::path::Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    const ALLOWED: &[&str] = &[
-        "f3ec92e5937bc2510e074e28fb1811215f76229fa08067adc5b2e2848fa8e845",
-        "3bf7a353daa4af0f4d2aa4c5a0294fd14d3a330b0abf2e2e4dd23e14650aa527",
-        "2378ed17a514a54d06b000f82ea1372d046d79d5cfbdb7ac5ac9a99c22ee2d0b",
-        "6fa80698d7268f6e88aa88c06fb27ee99e1bcee747c2e76911e6206a5b1aeeb3",
-        "b20f39fc00d242e706b6c30367ad811c676e0575050a4ec2f30104b696944b49",
-    ];
     let bytes = std::fs::read(path).map_err(|e| format!("read xmrig: {e}"))?;
-    let digest = hex::encode(Sha256::digest(bytes));
-    if ALLOWED.iter().any(|known| *known == digest) {
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn verify_sha256_allowlist(path: &std::path::Path, allowed: &[&str]) -> Result<(), String> {
+    let digest = file_sha256_hex(path)?;
+    if allowed.iter().any(|known| *known == digest) {
         Ok(())
     } else {
         Err(format!(
@@ -1569,6 +1627,37 @@ fn verify_xmrig_hash(path: &std::path::Path) -> Result<(), String> {
             path.display()
         ))
     }
+}
+
+fn verify_xmrig_hash(path: &std::path::Path) -> Result<(), String> {
+    verify_sha256_allowlist(path, XMRIG_SHA256_ALLOWLIST)
+}
+
+/// macOS: a strict code signature covers the bytes Tauri re-signed, which no
+/// longer match the pre-sign hash. Unsigned binaries, and every other OS,
+/// still have to match the SHA-256 allowlist. This does not accept an
+/// arbitrary file: `codesign --verify --strict` has to succeed.
+#[cfg(target_os = "macos")]
+fn macos_codesign_verify_strict(path: &std::path::Path) -> bool {
+    Command::new("/usr/bin/codesign")
+        .arg("--verify")
+        .arg("--strict")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Check `path`, then the caller must spawn that same path. Do not resolve a
+/// different path between this call and `Command::spawn`.
+fn verify_xmrig_for_spawn(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if macos_codesign_verify_strict(path) {
+        return Ok(());
+    }
+    verify_xmrig_hash(path)
 }
 
 fn endpoint_url(raw: &str) -> Result<url::Url, String> {
@@ -1809,6 +1898,8 @@ pub async fn mine_start(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
+    // Verify this path, then spawn it. Do not resolve a different path here.
+    verify_xmrig_for_spawn(&bin)?;
     let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start xmrig ({bin:?}): {e}"))?;
@@ -1942,9 +2033,10 @@ pub fn initial_prefs() -> Prefs {
 #[cfg(test)]
 mod tests {
     use super::{
-        darkirc_transport_for_prefs, miner_socks5_proxy, parse_hashrate, resolve_xmrig_candidate,
-        sanitize_nickname, transport_kind_for_prefs, validate_host_port, validate_lwd_url,
-        xmrig_sidecar_filename, xmrig_triple_filename,
+        darkirc_transport_for_prefs, file_sha256_hex, miner_socks5_proxy, parse_hashrate,
+        resolve_xmrig_candidate, sanitize_nickname, transport_kind_for_prefs, validate_host_port,
+        validate_lwd_url, validate_prefs_for_save, validate_socks_port, verify_sha256_allowlist,
+        verify_xmrig_hash, xmrig_sidecar_filename, xmrig_triple_filename,
     };
     use crate::prefs::Prefs;
     use darkfi_mobile_ffi::{DarkircTransport, transport_manager::TransportKind};
@@ -2120,5 +2212,55 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verify_xmrig_hash_compares_temp_file_to_allowlist() {
+        let root = std::env::temp_dir().join(format!("nh_xmrig_hash_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("xmrig");
+        std::fs::write(&path, b"nighthawk-xmrig-hash-fixture").unwrap();
+
+        let digest = file_sha256_hex(&path).unwrap();
+        assert!(verify_sha256_allowlist(&path, &[digest.as_str()]).is_ok());
+        let rejected = verify_xmrig_hash(&path).unwrap_err();
+        assert!(rejected.contains(digest.as_str()));
+        assert!(rejected.contains("not a known Nighthawk build"));
+        assert!(
+            verify_sha256_allowlist(
+                &path,
+                &["f3ec92e5937bc2510e074e28fb1811215f76229fa08067adc5b2e2848fa8e845"],
+            )
+            .is_err()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validate_prefs_for_save_rejects_bad_port_and_pin_and_allows_loopback() {
+        assert!(validate_socks_port(0, "Tor SOCKS port").is_err());
+        assert!(validate_socks_port(70_000, "Tor SOCKS port").is_err());
+        assert!(validate_socks_port(1, "Tor SOCKS port").is_ok());
+        assert!(validate_socks_port(65535, "Nym SOCKS port").is_ok());
+
+        let mut prefs = Prefs::default();
+        prefs.lightwallet_url = "http://127.0.0.1:9067".into();
+        prefs.lightwallet_tls_pin_sha256 = None;
+        prefs.tor_socks_port = 0;
+        let bad_port = validate_prefs_for_save(&prefs).unwrap_err();
+        assert!(bad_port.contains("Tor SOCKS port"));
+
+        prefs.tor_socks_port = 9150;
+        prefs.lightwallet_tls_pin_sha256 = Some("abcd".into());
+        let bad_pin = validate_prefs_for_save(&prefs).unwrap_err();
+        assert!(bad_pin.contains("TLS pin"));
+
+        prefs.lightwallet_tls_pin_sha256 = None;
+        prefs.birthday_height = -1;
+        assert!(validate_prefs_for_save(&prefs).is_err());
+
+        prefs.birthday_height = 0;
+        assert!(validate_prefs_for_save(&prefs).is_ok());
     }
 }
