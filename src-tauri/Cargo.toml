@@ -1,6 +1,6 @@
 [package]
 name = "nighthawk-app-desktop"
-version = "3.1.23"
+version = "3.2.1"
 description = "Nighthawk Desktop — DarkFi wallet with Lit UI"
 authors = ["Nighthawk Apps"]
 edition = "2024"
@@ -36,23 +36,19 @@ blake3 = "=1.8.3"
 url = "2"
 zeroize = { version = "1.9", features = ["derive"] }
 
-# Shared UniFFI crate (Android / iOS / desktop). UniFFI 0.32.2.
-# Cargo resolves this crate's `../../third_party/darkfi` paths from the
-# directory it opens, not from a symlink target. The checkout at
-# GitHub/darkfi-mobile-ffi is a symlink to this directory; depending on
-# the symlink would look for DarkFi outside the repo. iOS builds
-# `nighthawk-android-wallet/rust/darkfi-mobile-ffi` directly via
-# `build-darkfi-mobile-ffi-ios.sh`; `nighthawk-ios-wallet/rust/Cargo.toml`
-# no longer lists `darkfi-mobile-ffi`.
-darkfi-mobile-ffi = { path = "../../nighthawk-android-wallet/rust/darkfi-mobile-ffi", default-features = true }
+# Shared UniFFI + Rust core crate (`nighthawk-apps/blackhawk`).
+blackhawk = { path = "../../blackhawk/crates/blackhawk", default-features = true }
 
 [patch.crates-io]
 halo2_proofs = { git = "https://github.com/parazyd/halo2", branch = "v050" }
 halo2_gadgets = { git = "https://github.com/parazyd/halo2", branch = "v050" }
 url = { git = "https://github.com/darkrenaissance/rust-url", branch = "v258" }
-# Same pins as nighthawk-android-wallet/rust/Cargo.toml: darkfi-mobile-ffi needs
+# Same pins as blackhawk/Cargo.toml: blackhawk needs
 # nym-smolmix 2.0.0, which is not on crates.io, and one form_urlencoded.
 form_urlencoded = { git = "https://github.com/darkrenaissance/rust-url", branch = "v258" }
 nym-smolmix = { git = "https://github.com/nymtech/nym.git", rev = "5f0dba82d7a4c3d32fb21f78a0e3ddb6320b4ae8" }
 # Self-contained vendored sysinfo 0.38.4 (open_files + RTM_IFINFO2 iOS/macOS build fix).
-sysinfo = { path = "../../nighthawk-android-wallet/rust/vendor/sysinfo-0.38.4" }
+sysinfo = { path = "../../blackhawk/vendor/sysinfo-0.38.4" }
+
+[lints.rust]
+warnings = "deny"

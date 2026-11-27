@@ -49,10 +49,21 @@ export class DaoScreen extends LitElement {
   @state() private votingProposal: string | null = null;
   @state() private executingProposal: string | null = null;
   @state() private localeTick = 0;
+  private tomlClipClearTimer?: number;
 
   private onLocale = () => {
     this.localeTick++;
   };
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener("nh-locale-changed", this.onLocale);
+    if (this.tomlClipClearTimer) {
+      clearTimeout(this.tomlClipClearTimer);
+      this.tomlClipClearTimer = undefined;
+    }
+    this.exportedToml = "";
+  }
 
   static styles = css`
     :host {
@@ -319,11 +330,6 @@ export class DaoScreen extends LitElement {
     super.connectedCallback();
     window.addEventListener("nh-locale-changed", this.onLocale);
     await this.refreshDaos();
-  }
-
-  override disconnectedCallback() {
-    window.removeEventListener("nh-locale-changed", this.onLocale);
-    super.disconnectedCallback();
   }
 
   private async refreshDaos() {
@@ -924,7 +930,13 @@ export class DaoScreen extends LitElement {
               `
             : null}
           <div class="modal-actions">
-            <button class="secondary" @click=${() => (this.showExportModal = false)}>
+            <button
+              class="secondary"
+              @click=${() => {
+                this.showExportModal = false;
+                this.exportedToml = "";
+              }}
+            >
               ${t("common.close")}
             </button>
             ${this.exportedToml
@@ -934,6 +946,11 @@ export class DaoScreen extends LitElement {
                     @click=${() => {
                       void navigator.clipboard.writeText(this.exportedToml);
                       this.message = t("dao.toml_copied");
+                      if (this.tomlClipClearTimer) clearTimeout(this.tomlClipClearTimer);
+                      this.tomlClipClearTimer = window.setTimeout(() => {
+                        void api.clearOsClipboard().catch(() => undefined);
+                        void navigator.clipboard?.writeText("").catch(() => undefined);
+                      }, 60_000);
                     }}
                   >
                     ${t("dao.copy_toml")}

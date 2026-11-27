@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "mis. 1.5",
   "chat.modal_memo_placeholder": "Catatan opsional",
   "chat.modal_post_request": "Kirim permintaan",
-  "chat.wallet_address_not_ready": "Alamat dompet belum siap."
+  "chat.wallet_address_not_ready": "Alamat dompet belum siap.",
+  "settings.disable_direct": "Nonaktifkan Koneksi Langsung",
+  "settings.disable_direct_hint": "Blokir fallback koneksi langsung secara permanen (wajib Tor atau Nym untuk seluruh lalu lintas).",
+  "settings.confirm_disable_direct": "Nonaktifkan Koneksi Langsung? Nighthawk akan memblokir koneksi langsung hingga Anda mengaktifkannya kembali di sini."
 }

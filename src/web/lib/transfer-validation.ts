@@ -11,7 +11,7 @@ import {
   truncateUtf8Bytes,
 } from "./payment-uri.ts";
 
-/** Matches `darkfi-mobile-ffi::transactions::SCHEDULE_TRANSFER_FEE_ATOMIC` (0.0542 DRK). */
+/** Matches `blackhawk::transactions::SCHEDULE_TRANSFER_FEE_ATOMIC` (0.0542 DRK). */
 export const DEFAULT_SCHEDULE_FEE_ATOMIC = 5_420_000n;
 
 export type SendValidationErrorCode =

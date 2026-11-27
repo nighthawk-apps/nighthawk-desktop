@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "例: 1.5",
   "chat.modal_memo_placeholder": "任意のメモ",
   "chat.modal_post_request": "リクエストを投稿",
-  "chat.wallet_address_not_ready": "ウォレットアドレスはまだ準備できていません。"
+  "chat.wallet_address_not_ready": "ウォレットアドレスはまだ準備できていません。",
+  "settings.disable_direct": "直接接続を無効にする",
+  "settings.disable_direct_hint": "クリアネットの直接接続フォールバックを恒久的にブロックします（すべての通信にTorまたはNymが必須になります）。",
+  "settings.confirm_disable_direct": "直接接続を無効にしますか？ここで再度有効にするまで、直接接続フォールバックはブロックされます。"
 }

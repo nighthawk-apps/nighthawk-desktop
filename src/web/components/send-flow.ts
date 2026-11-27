@@ -213,12 +213,16 @@ export class SendFlow extends LitElement {
         return;
       }
     }
+    this.chatPayContext = null;
     this.recipient = v;
   }
 
   private onRecipientPaste(e: ClipboardEvent) {
     const text = e.clipboardData?.getData("text") ?? "";
-    if (!/^drk:/i.test(text.trim())) return;
+    if (!/^drk:/i.test(text.trim())) {
+      this.chatPayContext = null;
+      return;
+    }
     const parsed = applyRecipientPaste(text);
     if (!parsed) return;
     e.preventDefault();
@@ -251,6 +255,7 @@ export class SendFlow extends LitElement {
       if (!parsed) {
         // Raw QR payload that isn't a drk: URI — use as address if plausible
         if (code.data.trim().length >= 16 && !/\s/.test(code.data.trim())) {
+          this.chatPayContext = null;
           this.recipient = code.data.trim();
           this.scanHint = t("send.address_filled_qr");
           return;
@@ -259,6 +264,7 @@ export class SendFlow extends LitElement {
         this.scanHint = "";
         return;
       }
+      this.chatPayContext = null;
       this.applyParsed(parsed);
     } catch (err: unknown) {
       this.scanHint = "";
@@ -311,6 +317,13 @@ export class SendFlow extends LitElement {
     txId?: string,
   ) {
     if (!this.chatPayContext) return;
+    const expectedAddr = applyRecipientPaste(this.chatPayContext.raw)?.address?.trim();
+    if (expectedAddr && expectedAddr !== address.trim()) {
+      return;
+    }
+    if (!this.chatPayContext.dmMode && this.chatPayContext.channel.startsWith("#")) {
+      return;
+    }
     const receipt: ChatReceipt = {
       id: this.chatPayContext.receiptId,
       phase,
@@ -336,53 +349,56 @@ export class SendFlow extends LitElement {
   }
 
   private async send() {
+    if (this.busy) return;
+    this.busy = true;
     this.error = "";
     this.result = "";
-    let drkAtomic: string;
     try {
-      this.tokens = await api.listTokenBalances();
-      drkAtomic = await api.walletBalance();
-    } catch (e: unknown) {
-      this.error = formatInvokeError(e);
-      return;
-    }
-
-    const validated = validateSendSubmission({
-      sync: this.sync,
-      recipient: this.recipient,
-      amount: this.amount,
-      memo: this.memo,
-      tokenId: this.tokenId,
-      tokens: this.tokens,
-      drkBalanceAtomic: drkAtomic,
-      estimatedFeeAtomic: this.fee,
-    });
-    if (!validated.ok) {
-      this.error = sendErrorText(validated.code);
-      return;
-    }
-
-    const dest = validated.recipient;
-    if (!confirm(t("send.confirm_prompt", { amount: validated.amount, dest }))) {
-      return;
-    }
-    this.busy = true;
-    try {
-      const parsed = applyRecipientPaste(this.recipient);
-      if (parsed && /^drk:/i.test(this.recipient.trim())) {
-        this.applyParsed(parsed);
+      let drkAtomic: string;
+      try {
+        this.tokens = await api.listTokenBalances();
+        drkAtomic = await api.walletBalance();
+      } catch (e: unknown) {
+        this.error = formatInvokeError(e);
+        return;
       }
-      this.result = await api.sendDrk({
-        recipient: validated.recipient,
-        amount: validated.amount,
-        memo: validated.memo,
-        tokenId: validated.tokenId,
+
+      const validated = validateSendSubmission({
+        sync: this.sync,
+        recipient: this.recipient,
+        amount: this.amount,
+        memo: this.memo,
+        tokenId: this.tokenId,
+        tokens: this.tokens,
+        drkBalanceAtomic: drkAtomic,
+        estimatedFeeAtomic: this.fee,
       });
-      this.emitChatReceipt("broadcasted", dest, this.result);
-      this.chatPayContext = null;
-    } catch (e: unknown) {
-      this.error = formatInvokeError(e);
-      this.emitChatReceipt("failed", dest);
+      if (!validated.ok) {
+        this.error = sendErrorText(validated.code);
+        return;
+      }
+
+      const dest = validated.recipient;
+      if (!confirm(t("send.confirm_prompt", { amount: validated.amount, dest }))) {
+        return;
+      }
+      try {
+        const parsed = applyRecipientPaste(this.recipient);
+        if (parsed && /^drk:/i.test(this.recipient.trim())) {
+          this.applyParsed(parsed);
+        }
+        this.result = await api.sendDrk({
+          recipient: validated.recipient,
+          amount: validated.amount,
+          memo: validated.memo,
+          tokenId: validated.tokenId,
+        });
+        this.emitChatReceipt("broadcasted", dest, this.result);
+        this.chatPayContext = null;
+      } catch (e: unknown) {
+        this.error = formatInvokeError(e);
+        this.emitChatReceipt("failed", dest);
+      }
     } finally {
       this.busy = false;
     }
@@ -419,8 +435,13 @@ export class SendFlow extends LitElement {
       <label>${t("send.token_label")}</label>
       <select
         .value=${this.tokenId}
-        @change=${(e: Event) =>
-          (this.tokenId = (e.target as HTMLSelectElement).value)}
+        @change=${(e: Event) => {
+          const val = (e.target as HTMLSelectElement).value;
+          this.tokenId = val;
+          if (val && val.toUpperCase() !== "DRK") {
+            this.chatPayContext = null;
+          }
+        }}
       >
         <option value="">${t("token.drk_native")}</option>
         ${this.tokens.map(
@@ -447,7 +468,10 @@ export class SendFlow extends LitElement {
             const id = (e.target as HTMLSelectElement).value;
             this.selectedContactId = id;
             const entry = this.book.find((c) => c.id === id);
-            if (entry) this.recipient = entry.address;
+            if (entry) {
+              this.chatPayContext = null;
+              this.recipient = entry.address;
+            }
           }}
         >
           <option value="">${t("send.select_contact")}</option>

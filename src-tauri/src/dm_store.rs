@@ -8,6 +8,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
 };
 use anyhow::{Context, Result, anyhow};
+use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_DM_CONTACTS: usize = 200;
+
+static DM_STORE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +37,8 @@ pub struct DmContactStored {
     pub last_seen_at: u64,
     #[serde(default)]
     pub unread: u32,
+    #[serde(default)]
+    pub ratchet_capable: bool,
 }
 
 fn path() -> PathBuf {
@@ -98,6 +103,7 @@ fn open_seal(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn save(wallet_pass: &str, keys: &DmKeypairStored) -> Result<()> {
+    let _guard = DM_STORE_LOCK.lock();
     let plain = serde_json::to_vec(keys)?;
     let key = derive_key(wallet_pass);
     let sealed = seal(&key, &plain)?;
@@ -106,6 +112,7 @@ pub fn save(wallet_pass: &str, keys: &DmKeypairStored) -> Result<()> {
 }
 
 pub fn load(wallet_pass: &str) -> Result<Option<DmKeypairStored>> {
+    let _guard = DM_STORE_LOCK.lock();
     let p = path();
     if !p.exists() {
         return Ok(None);
@@ -117,7 +124,7 @@ pub fn load(wallet_pass: &str) -> Result<Option<DmKeypairStored>> {
     Ok(Some(keys))
 }
 
-pub fn save_contacts(wallet_pass: &str, contacts: &[DmContactStored]) -> Result<()> {
+fn save_contacts_unlocked(wallet_pass: &str, contacts: &[DmContactStored]) -> Result<()> {
     let capped: Vec<&DmContactStored> = contacts.iter().take(MAX_DM_CONTACTS).collect();
     let plain = serde_json::to_vec(&capped)?;
     let key = derive_contacts_key(wallet_pass);
@@ -127,7 +134,7 @@ pub fn save_contacts(wallet_pass: &str, contacts: &[DmContactStored]) -> Result<
     Ok(())
 }
 
-pub fn load_contacts(wallet_pass: &str) -> Result<Vec<DmContactStored>> {
+fn load_contacts_unlocked(wallet_pass: &str) -> Result<Vec<DmContactStored>> {
     let p = contacts_path();
     if !p.exists() {
         return Ok(Vec::new());
@@ -140,11 +147,18 @@ pub fn load_contacts(wallet_pass: &str) -> Result<Vec<DmContactStored>> {
     Ok(contacts)
 }
 
+pub fn load_contacts(wallet_pass: &str) -> Result<Vec<DmContactStored>> {
+    let _guard = DM_STORE_LOCK.lock();
+    load_contacts_unlocked(wallet_pass)
+}
+
 pub fn upsert_contact(
     wallet_pass: &str,
     label: &str,
     public_b58: &str,
+    ratchet_capable: bool,
 ) -> Result<Vec<DmContactStored>> {
+    let _guard = DM_STORE_LOCK.lock();
     let pk = public_b58.trim();
     if pk.is_empty() {
         return Err(anyhow!("Peer public key cannot be empty"));
@@ -158,7 +172,7 @@ pub fn upsert_contact(
             decoded.len()
         ));
     }
-    let clean_label = {
+    let clean_label: String = {
         let t = label.trim();
         if t.starts_with('#') {
             return Err(anyhow!("DM contact label cannot start with '#'"));
@@ -169,11 +183,22 @@ pub fn upsert_contact(
             t.chars().take(64).collect()
         }
     };
-    let mut contacts = load_contacts(wallet_pass)?;
+    let mut contacts = load_contacts_unlocked(wallet_pass)?;
+    if contacts
+        .iter()
+        .any(|c| c.public_b58 != pk && c.label.eq_ignore_ascii_case(&clean_label))
+    {
+        return Err(anyhow!(
+            "A DM contact named '{clean_label}' already exists — choose a unique label"
+        ));
+    }
     let now = now_millis();
     if let Some(existing) = contacts.iter_mut().find(|c| c.public_b58 == pk) {
         existing.label = clean_label;
         existing.last_seen_at = now;
+        if ratchet_capable {
+            existing.ratchet_capable = true;
+        }
     } else {
         contacts.insert(
             0,
@@ -183,11 +208,12 @@ pub fn upsert_contact(
                 public_b58: pk.to_string(),
                 last_seen_at: now,
                 unread: 0,
+                ratchet_capable,
             },
         );
         contacts.truncate(MAX_DM_CONTACTS);
     }
-    save_contacts(wallet_pass, &contacts)?;
+    save_contacts_unlocked(wallet_pass, &contacts)?;
     Ok(contacts)
 }
 
@@ -195,15 +221,17 @@ pub fn remove_contact(
     wallet_pass: &str,
     id: &str,
 ) -> Result<(Vec<DmContactStored>, Option<DmContactStored>)> {
-    let mut contacts = load_contacts(wallet_pass)?;
+    let _guard = DM_STORE_LOCK.lock();
+    let mut contacts = load_contacts_unlocked(wallet_pass)?;
     let removed = contacts.iter().find(|c| c.id == id).cloned();
     contacts.retain(|c| c.id != id);
-    save_contacts(wallet_pass, &contacts)?;
+    save_contacts_unlocked(wallet_pass, &contacts)?;
     Ok((contacts, removed))
 }
 
 pub fn clear_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContactStored>> {
-    let mut contacts = load_contacts(wallet_pass)?;
+    let _guard = DM_STORE_LOCK.lock();
+    let mut contacts = load_contacts_unlocked(wallet_pass)?;
     let pk = public_b58.trim();
     let mut changed = false;
     for c in &mut contacts {
@@ -213,13 +241,14 @@ pub fn clear_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContact
         }
     }
     if changed {
-        save_contacts(wallet_pass, &contacts)?;
+        save_contacts_unlocked(wallet_pass, &contacts)?;
     }
     Ok(contacts)
 }
 
 pub fn bump_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContactStored>> {
-    let mut contacts = load_contacts(wallet_pass)?;
+    let _guard = DM_STORE_LOCK.lock();
+    let mut contacts = load_contacts_unlocked(wallet_pass)?;
     let pk = public_b58.trim();
     let mut changed = false;
     let now = now_millis();
@@ -231,7 +260,7 @@ pub fn bump_unread(wallet_pass: &str, public_b58: &str) -> Result<Vec<DmContactS
         }
     }
     if changed {
-        save_contacts(wallet_pass, &contacts)?;
+        save_contacts_unlocked(wallet_pass, &contacts)?;
     }
     Ok(contacts)
 }
@@ -240,7 +269,8 @@ pub fn migrate_legacy_contacts(
     wallet_pass: &str,
     legacy: Vec<DmContactStored>,
 ) -> Result<Vec<DmContactStored>> {
-    let mut contacts = load_contacts(wallet_pass)?;
+    let _guard = DM_STORE_LOCK.lock();
+    let mut contacts = load_contacts_unlocked(wallet_pass)?;
     let mut changed = false;
     for entry in legacy {
         let pk = entry.public_b58.trim().to_string();
@@ -256,11 +286,19 @@ pub fn migrate_legacy_contacts(
         if contacts.iter().any(|c| c.public_b58 == pk) {
             continue;
         }
-        let label = if entry.label.trim().is_empty() {
+        let raw_lbl = entry.label.trim().trim_start_matches('#').trim();
+        let mut label: String = if raw_lbl.is_empty() {
             pk.chars().take(12).collect()
         } else {
-            entry.label.trim().chars().take(64).collect()
+            raw_lbl.chars().take(64).collect()
         };
+        if contacts
+            .iter()
+            .any(|c| c.label.eq_ignore_ascii_case(&label))
+        {
+            let suffix: String = pk.chars().take(6).collect();
+            label = format!("{} ({suffix})", label.chars().take(54).collect::<String>());
+        }
         let id = if entry.id.trim().is_empty() {
             format!("dm-{}-{:08x}", now_millis(), rand::random::<u32>())
         } else {
@@ -272,17 +310,19 @@ pub fn migrate_legacy_contacts(
             public_b58: pk,
             last_seen_at: entry.last_seen_at,
             unread: entry.unread,
+            ratchet_capable: entry.ratchet_capable,
         });
         changed = true;
     }
     contacts.truncate(MAX_DM_CONTACTS);
     if changed {
-        save_contacts(wallet_pass, &contacts)?;
+        save_contacts_unlocked(wallet_pass, &contacts)?;
     }
     Ok(contacts)
 }
 
 pub fn clear() {
+    let _guard = DM_STORE_LOCK.lock();
     let _ = fs::remove_file(path());
     let _ = fs::remove_file(contacts_path());
 }
@@ -302,13 +342,14 @@ mod tests {
         let pk2 = bs58::encode([0x22u8; 32]).into_string();
         let pass = "test-wallet-pass";
 
-        let list = upsert_contact(pass, "AliceSecretLabel", &pk1).unwrap();
+        let list = upsert_contact(pass, "AliceSecretLabel", &pk1, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].label, "AliceSecretLabel");
         assert_eq!(list[0].public_b58, pk1);
 
-        let list = upsert_contact(pass, "Bob", &pk2).unwrap();
+        let list = upsert_contact(pass, "Bob", &pk2, true).unwrap();
         assert_eq!(list.len(), 2);
+        assert!(list[0].ratchet_capable);
 
         let loaded = load_contacts(pass).unwrap();
         assert_eq!(loaded, list);
@@ -348,7 +389,7 @@ mod tests {
 
         let pk1 = bs58::encode([0x33u8; 32]).into_string();
         let pass = "test-wallet-pass-mig";
-        upsert_contact(pass, "Existing", &pk1).unwrap();
+        upsert_contact(pass, "Existing", &pk1, false).unwrap();
 
         let pk2 = bs58::encode([0x44u8; 32]).into_string();
         let merged = migrate_legacy_contacts(
@@ -360,6 +401,7 @@ mod tests {
                     public_b58: pk1.clone(),
                     last_seen_at: 1,
                     unread: 2,
+                    ratchet_capable: false,
                 },
                 DmContactStored {
                     id: "bad-len".into(),
@@ -367,6 +409,7 @@ mod tests {
                     public_b58: bs58::encode([0x55u8; 16]).into_string(),
                     last_seen_at: 1,
                     unread: 0,
+                    ratchet_capable: false,
                 },
                 DmContactStored {
                     id: "leg-2".into(),
@@ -374,6 +417,7 @@ mod tests {
                     public_b58: pk2.clone(),
                     last_seen_at: 99,
                     unread: 3,
+                    ratchet_capable: false,
                 },
             ],
         )

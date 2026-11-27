@@ -54,6 +54,8 @@ export interface Prefs {
   activeWalletId: string;
   /** UnifOMR-only sync (no trial-decrypt fallback). Default false. */
   strictOmrOnly: boolean;
+  /** Permanently disable Direct clearnet fallback under Settings → Advanced. Default false. */
+  disableDirectConnection?: boolean;
 }
 
 /** Normalize fee tier from prefs (camelCase feeTier). */
@@ -181,6 +183,7 @@ export interface DmContactRecord {
   publicB58: string;
   lastSeenAt: number;
   unread: number;
+  ratchetCapable?: boolean;
 }
 
 export interface AddressBookEntry {
@@ -315,8 +318,12 @@ export const api = {
   dmGenerateKeypair: () => invokeCmd<DmKeypair>("dm_generate_keypair"),
   dmLoadKeypair: () => invokeCmd<DmKeypair | null>("dm_load_keypair"),
   dmContactsList: () => invokeCmd<DmContactRecord[]>("dm_contacts_list"),
-  dmContactsUpsert: (label: string, publicB58: string) =>
-    invokeCmd<DmContactRecord[]>("dm_contacts_upsert", { label, publicB58 }),
+  dmContactsUpsert: (label: string, publicB58: string, ratchetCapable?: boolean) =>
+    invokeCmd<DmContactRecord[]>("dm_contacts_upsert", {
+      label,
+      publicB58,
+      ratchetCapable: ratchetCapable ?? null,
+    }),
   dmContactsRemove: (id: string) =>
     invokeCmd<DmContactRecord[]>("dm_contacts_remove", { id }),
   dmContactsClearUnread: (publicB58: string) =>
@@ -364,4 +371,7 @@ export const api = {
   setNetwork: (network: Network) => invokeCmd<void>("set_network", { network }),
   backupMnemonic: () => invokeCmd<string[]>("backup_mnemonic"),
   wipeWallet: () => invokeCmd<void>("wipe_wallet"),
+  openExternalUrl: (url: string) =>
+    invokeCmd<void>("open_external_url", { url }),
+  clearOsClipboard: () => invokeCmd<void>("clear_os_clipboard"),
 };

@@ -11,6 +11,56 @@ export interface DmContact {
   publicB58: string;
   lastSeenAt: number;
   unread: number;
+  ratchetCapable?: boolean;
+}
+
+export interface ParsedContactInput {
+  publicB58: string;
+  label?: string;
+  ratchetCapable: boolean;
+}
+
+/** Parse either a raw base58 DM public key or a `nighthawk://contact?k=...&name=...&dr=1` URI. */
+export function parseNighthawkContactInput(rawInput: string): ParsedContactInput {
+  const trimmed = rawInput.trim();
+  if (/^nighthawk:\/\//i.test(trimmed)) {
+    try {
+      const normalized = trimmed.replace(/^nighthawk:\/\//i, "https://");
+      const url = new URL(normalized);
+      const key =
+        url.searchParams.get("k") ??
+        url.searchParams.get("key") ??
+        url.searchParams.get("pk") ??
+        url.searchParams.get("dm") ??
+        url.searchParams.get("pubkey") ??
+        "";
+      const name =
+        url.searchParams.get("name") ??
+        url.searchParams.get("nick") ??
+        url.searchParams.get("label") ??
+        undefined;
+      const drRaw = url.searchParams.get("dr");
+      if (key.trim()) {
+        return {
+          publicB58: key.trim(),
+          label: name?.trim() || undefined,
+          ratchetCapable: drRaw === "1" || drRaw?.toLowerCase() === "true",
+        };
+      }
+    } catch {
+      /* fall through to raw key */
+    }
+  }
+  return { publicB58: trimmed, ratchetCapable: false };
+}
+
+/** Format a Nighthawk DM contact URI advertising Double Ratchet support (`&dr=1`). */
+export function formatNighthawkContactCard(publicB58: string, nick?: string): string {
+  const params = new URLSearchParams({ k: publicB58.trim(), dr: "1" });
+  if (nick && nick.trim()) {
+    params.set("name", nick.trim());
+  }
+  return `nighthawk://contact?${params.toString()}`;
 }
 
 export const LEGACY_DM_CONTACTS_KEY = "nighthawk.dm.contacts.v1";

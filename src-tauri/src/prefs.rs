@@ -44,6 +44,9 @@ pub struct Prefs {
     /// Not maintained until DarkFi mainnet contracts are live.
     #[serde(default = "default_strict_omr_only", alias = "strict_omr_only")]
     pub strict_omr_only: bool,
+    /// Permanently disable clearnet Direct fallback in Settings -> Advanced. Default false.
+    #[serde(default, alias = "disable_direct_connection")]
+    pub disable_direct_connection: bool,
 }
 
 fn default_strict_omr_only() -> bool {
@@ -82,16 +85,56 @@ impl Default for Prefs {
             fee_tier: default_fee_tier(),
             active_wallet_id: default_wallet_id(),
             strict_omr_only: default_strict_omr_only(),
+            disable_direct_connection: false,
+        }
+    }
+}
+
+pub(crate) fn normalize_loaded_prefs(mut prefs: Prefs) -> Prefs {
+    if prefs.disable_direct_connection && !prefs.use_tor && !prefs.use_nym {
+        prefs.use_tor = true;
+    }
+    prefs
+}
+
+pub(crate) fn load_prefs_checked() -> (Prefs, bool) {
+    let path = prefs_path();
+    match fs::read_to_string(&path) {
+        Ok(s) => match serde_json::from_str::<Prefs>(&s) {
+            Ok(p) => (normalize_loaded_prefs(p), false),
+            Err(e) => {
+                tracing::warn!("prefs.json corrupt ({e}); backing up and failing closed with Tor");
+                let bak = path.with_extension("json.corrupt.bak");
+                let _ = fs::rename(&path, &bak);
+                (
+                    Prefs {
+                        disable_direct_connection: true,
+                        use_tor: true,
+                        use_nym: false,
+                        ..Prefs::default()
+                    },
+                    true,
+                )
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Prefs::default(), false),
+        Err(e) => {
+            tracing::warn!("failed reading prefs.json ({e}); failing closed with Tor");
+            (
+                Prefs {
+                    disable_direct_connection: true,
+                    use_tor: true,
+                    use_nym: false,
+                    ..Prefs::default()
+                },
+                true,
+            )
         }
     }
 }
 
 pub fn load_prefs() -> Prefs {
-    let path = prefs_path();
-    match fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => Prefs::default(),
-    }
+    load_prefs_checked().0
 }
 
 pub fn save_prefs(prefs: &Prefs) -> Result<()> {
@@ -108,11 +151,13 @@ mod tests {
     fn default_strict_omr_only_is_off() {
         assert!(!default_strict_omr_only());
         assert!(!Prefs::default().strict_omr_only);
+        assert!(!Prefs::default().disable_direct_connection);
         assert!(Prefs::default().use_tor);
         let parsed: Prefs = serde_json::from_str(
             r#"{"network":"testnet","lightwalletUrl":"http://127.0.0.1:9067","stratumUrl":"x","useTor":true,"torSocksPort":9150,"mineThreads":1,"chatNick":"n","birthdayHeight":0}"#,
         )
         .unwrap();
         assert!(!parsed.strict_omr_only);
+        assert!(!parsed.disable_direct_connection);
     }
 }

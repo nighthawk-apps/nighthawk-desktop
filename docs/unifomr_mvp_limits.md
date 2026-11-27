@@ -1,6 +1,6 @@
 # UnifOMR limits (nighthawk-app-desktop)
 
-**Current product (Android/iOS 3.01.23, desktop 3.1.23, Moonshine 3.1.23, lightwalletd 0.3.15):** wallet sync is padded trial decryption. This document describes the experimental `fhe-omr` server build and the opt-in client flag. The default lightwalletd binary does not advertise UnifOMR. Android and iOS network privacy defaults to Nym. Moonshine and desktop Tor prefs default on. DarkFi pin `9d7ceaf77`, Arti 0.48.
+**Current product (Android 3.2.01, desktop 3.2.1, Moonshine 3.2.1, lightwalletd 0.3.15, iOS 3.01.24 pending 3.2.01):** wallet sync is padded trial decryption. This document describes the experimental `fhe-omr` server build and the opt-in client flag. The default lightwalletd binary does not advertise UnifOMR. Android and iOS network privacy defaults to Nym. Moonshine and desktop Tor prefs default on. DarkFi pin `b87318e80` (via `blackhawk` `0.3.0`), Arti 0.48.
 
 **Active crypto profile:** paper Table-1 **Param2** (ePrint 2026/910), fully wired:
 discrete Gaussian σ=0.5 errors, digest modulus-switch, all ℓ=2 plaintext bits
@@ -151,8 +151,8 @@ Distribute `scripts/certs/LIGHTWALLET_TLS_PIN_SHA256.txt` to every client before
 
 ## Desktop note
 
-Desktop uses the sibling `darkfi-mobile-ffi` path dependency
-(`../../nighthawk-android-wallet/rust/darkfi-mobile-ffi` from `src-tauri`) for
+Desktop uses the sibling `blackhawk` path dependency
+(`../../blackhawk/crates/blackhawk` from `src-tauri`) for
 UnifOMR/PIR, so it inherits the exact Param2 constants and paper-faithful
 per-message packing as the Android FFI. Ops hardening (TLS pin, multi detection
 keys, memo) is wired through Tauri prefs/bootstrap. gRPC types come from that

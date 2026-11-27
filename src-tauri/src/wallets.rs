@@ -1,12 +1,15 @@
 //! Multi-wallet profile registry (desktop-only).
 
 use crate::paths::{app_root, apply_wallet_profile, wallets_registry_path};
-use crate::prefs::{load_prefs, save_prefs};
+use crate::prefs::{load_prefs, load_prefs_checked, save_prefs};
 use anyhow::{Context, Result, anyhow};
+use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static WALLETS_LOCK: Mutex<()> = Mutex::new(());
 
 /// Valid profile id: `"default"` or a created profile id (`w{unix_secs}` / `w{unix_secs}_{hex}`).
 pub fn is_valid_wallet_id(id: &str) -> bool {
@@ -83,14 +86,17 @@ fn save_raw(reg: &RegistryFile) -> Result<()> {
 
 /// Ensure registry exists and apply active profile paths.
 pub fn bootstrap_from_prefs() -> Result<()> {
-    let mut prefs = load_prefs();
+    let _guard = WALLETS_LOCK.lock();
+    let (mut prefs, prefs_corrupt) = load_prefs_checked();
     let mut reg = load_raw()?;
     if reg.wallets.is_empty() {
         reg = ensure_default_registry();
     }
     if !reg.wallets.iter().any(|w| w.id == prefs.active_wallet_id) {
         prefs.active_wallet_id = reg.active_id.clone();
-        let _ = save_prefs(&prefs);
+        if !prefs_corrupt {
+            let _ = save_prefs(&prefs);
+        }
     }
     reg.active_id = prefs.active_wallet_id.clone();
     save_raw(&reg)?;
@@ -99,11 +105,13 @@ pub fn bootstrap_from_prefs() -> Result<()> {
 }
 
 pub fn list_profiles() -> Result<(String, Vec<WalletProfile>)> {
+    let _guard = WALLETS_LOCK.lock();
     let reg = load_raw()?;
     Ok((reg.active_id, reg.wallets))
 }
 
 pub fn create_profile(label: String) -> Result<WalletProfile> {
+    let _guard = WALLETS_LOCK.lock();
     let mut reg = load_raw()?;
     let mut suffix = [0u8; 4];
     rand::thread_rng().fill_bytes(&mut suffix);
@@ -130,6 +138,7 @@ pub fn create_profile(label: String) -> Result<WalletProfile> {
 
 /// Switch active profile paths (caller must lock wallet / clear session).
 pub fn switch_profile(wallet_id: &str) -> Result<()> {
+    let _guard = WALLETS_LOCK.lock();
     let mut reg = load_raw()?;
     if !reg.wallets.iter().any(|w| w.id == wallet_id) {
         return Err(anyhow!("Unknown wallet profile"));
@@ -144,6 +153,7 @@ pub fn switch_profile(wallet_id: &str) -> Result<()> {
 }
 
 pub fn rename_profile(wallet_id: &str, label: String) -> Result<Vec<WalletProfile>> {
+    let _guard = WALLETS_LOCK.lock();
     let mut reg = load_raw()?;
     let Some(w) = reg.wallets.iter_mut().find(|w| w.id == wallet_id) else {
         return Err(anyhow!("Unknown wallet profile"));
@@ -155,6 +165,7 @@ pub fn rename_profile(wallet_id: &str, label: String) -> Result<Vec<WalletProfil
 
 /// Remove a non-active, non-default profile directory.
 pub fn remove_profile(wallet_id: &str) -> Result<Vec<WalletProfile>> {
+    let _guard = WALLETS_LOCK.lock();
     if wallet_id == "default" {
         return Err(anyhow!("Cannot remove the primary wallet profile"));
     }

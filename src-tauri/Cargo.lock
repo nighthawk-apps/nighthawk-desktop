@@ -1420,6 +1420,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "blackhawk"
+version = "0.3.1"
+dependencies = [
+ "android_log-sys",
+ "android_logger",
+ "arti-client",
+ "async-compat",
+ "async-stream",
+ "bip39 2.2.2",
+ "blackhawk-unifomr",
+ "blake3",
+ "bs58",
+ "chacha20poly1305",
+ "crypto_box",
+ "darkfi",
+ "darkfi-sdk",
+ "darkfi-serial",
+ "darkfi_dao_contract",
+ "darkfi_money_contract",
+ "darkirc",
+ "drk",
+ "easy-parallel",
+ "fhe",
+ "fhe-traits",
+ "futures",
+ "hickory-proto",
+ "hmac 0.12.1",
+ "hyper-util",
+ "kvdb-overlay",
+ "log",
+ "num-bigint",
+ "num-traits",
+ "nym-smolmix",
+ "pbkdf2 0.12.2",
+ "prost 0.13.5",
+ "rand 0.8.8",
+ "rand 0.9.5",
+ "rayon",
+ "regex-lite",
+ "rusqlite",
+ "rustls 0.23.46",
+ "rustls-pki-types",
+ "semver",
+ "sha2 0.10.9",
+ "smol",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls 0.26.6",
+ "tokio-socks",
+ "tonic",
+ "tonic-build",
+ "tor-rtcompat",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "uniffi",
+ "url",
+ "x509-parser",
+ "zeroize",
+]
+
+[[package]]
+name = "blackhawk-unifomr"
+version = "0.3.1"
+dependencies = [
+ "blake3",
+ "fhe",
+ "fhe-traits",
+ "rand 0.9.5",
+ "rayon",
+ "zeroize",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2998,68 +3073,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "darkfi-mobile-ffi"
-version = "0.2.5"
-dependencies = [
- "android_log-sys",
- "android_logger",
- "arti-client",
- "async-compat",
- "async-stream",
- "bip39 2.2.2",
- "blake3",
- "bs58",
- "chacha20poly1305",
- "crypto_box",
- "darkfi",
- "darkfi-sdk",
- "darkfi-serial",
- "darkfi_dao_contract",
- "darkfi_money_contract",
- "darkirc",
- "drk",
- "easy-parallel",
- "fhe",
- "fhe-traits",
- "futures",
- "hickory-proto",
- "hmac 0.12.1",
- "hyper-util",
- "kvdb-overlay",
- "log",
- "num-bigint",
- "num-traits",
- "nym-smolmix",
- "pbkdf2 0.12.2",
- "prost 0.13.5",
- "rand 0.8.8",
- "rand 0.9.5",
- "rayon",
- "regex-lite",
- "rusqlite",
- "rustls 0.23.46",
- "rustls-pki-types",
- "semver",
- "sha2 0.10.9",
- "smol",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls 0.26.6",
- "tokio-socks",
- "tonic",
- "tonic-build",
- "tor-rtcompat",
- "tower 0.5.3",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "uniffi",
- "url",
- "x509-parser",
- "zeroize",
 ]
 
 [[package]]
@@ -7636,14 +7649,14 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nighthawk-app-desktop"
-version = "3.1.23"
+version = "3.2.1"
 dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
  "base64 0.22.1",
+ "blackhawk",
  "blake3",
  "bs58",
- "darkfi-mobile-ffi",
  "dirs 6.0.0",
  "hex",
  "hmac 0.12.1",

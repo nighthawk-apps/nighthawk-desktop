@@ -115,24 +115,38 @@ export class MineScreen extends LitElement {
     }
   `;
 
+  private startRefreshTimer?: number;
+
   async connectedCallback() {
     super.connectedCallback();
     window.addEventListener("nh-locale-changed", this.onLocale);
     try {
       const prefs = await api.getPrefs();
+      if (!this.isConnected) return;
       if (prefs.mineThreads) this.threads = prefs.mineThreads;
     } catch {
       /* ignore */
     }
     await this.refresh();
+    if (!this.isConnected) return;
     this.timer = window.setInterval(() => this.refresh(), 5000);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("nh-locale-changed", this.onLocale);
-    if (this.timer) clearInterval(this.timer);
-    if (this.persistTimer) clearTimeout(this.persistTimer);
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    if (this.startRefreshTimer) {
+      clearTimeout(this.startRefreshTimer);
+      this.startRefreshTimer = undefined;
+    }
   }
 
   private onThreadsInput(e: Event) {
@@ -186,7 +200,8 @@ export class MineScreen extends LitElement {
       await api.mineStart(this.threads);
       await this.refresh();
       // Surface stratum rejection quickly from the first log lines
-      setTimeout(() => this.refresh(), 2500);
+      if (this.startRefreshTimer) clearTimeout(this.startRefreshTimer);
+      this.startRefreshTimer = window.setTimeout(() => this.refresh(), 2500);
     } catch (e: unknown) {
       this.error = formatInvokeError(e);
       this.hint = mineErrorHint(this.status?.lastLog || "", this.error);

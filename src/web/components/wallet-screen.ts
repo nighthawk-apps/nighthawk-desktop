@@ -18,6 +18,7 @@ import {
   isLightSyncLive,
 } from "../lib/sync-label";
 import { t } from "../i18n";
+import "./flow-sync-wave";
 
 @customElement("wallet-screen")
 export class WalletScreen extends LitElement {
@@ -270,17 +271,23 @@ export class WalletScreen extends LitElement {
   async connectedCallback() {
     super.connectedCallback();
     window.addEventListener("nh-locale-changed", this.onLocale);
-    this.unlistenReorg = await api.onReorg((e) => {
+    window.addEventListener("nighthawk-sync-updated", this.onShellSync);
+    const unlisten = await api.onReorg((e) => {
       this.reorgMsg = e.summaryMessage;
       this.reorgHeight = e.rewoundTo;
     });
+    if (!this.isConnected) {
+      unlisten();
+      return;
+    }
+    this.unlistenReorg = unlisten;
     await this.reload();
-    window.addEventListener("nighthawk-sync-updated", this.onShellSync);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unlistenReorg?.();
+    this.unlistenReorg = undefined;
     window.removeEventListener("nh-locale-changed", this.onLocale);
     window.removeEventListener("nighthawk-sync-updated", this.onShellSync);
   }
@@ -363,11 +370,15 @@ export class WalletScreen extends LitElement {
     try {
       await api.walletRefresh();
       await this.reload();
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const refreshErr = formatInvokeError(e);
       try {
         await this.reload();
       } catch {
-        this.error = formatInvokeError(e);
+        /* reload sets this.error */
+      }
+      if (!this.error) {
+        this.error = refreshErr;
       }
     } finally {
       this.refreshing = false;
@@ -484,6 +495,12 @@ export class WalletScreen extends LitElement {
                   >${snap.scannedHeight} / ${snap.chainTip} (${pct}%)</span
                 >
               </div>
+              <flow-sync-wave
+                .progress=${pct / 100}
+                .active=${(this.lwdLive(snap) || snap.status === "Connecting") &&
+                (!spendReady(snap) || pct < 100)}
+                .scannedHeight=${snap.scannedHeight}
+              ></flow-sync-wave>
               <div class="bar"><span style="width:${pct}%"></span></div>
               <div class="sub" style="margin:0">
                 ${snap.statusMessage || snap.syncTypeMessage || "—"}

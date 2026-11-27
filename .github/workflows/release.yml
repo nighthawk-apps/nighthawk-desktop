@@ -17,16 +17,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout Android wallet for darkfi-mobile-ffi
+      - name: Checkout Blackhawk UniFFI core
         uses: actions/checkout@v4
         with:
-          repository: nighthawk-apps/nighthawk-android-wallet
-          # The next desktop release updates this SHA to the Android commit it was built against.
-          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
-          path: android-wallet
+          repository: nighthawk-apps/blackhawk
+          # Pinned Blackhawk commit this desktop release builds against.
+          ref: cd8971c8c770f89a5978d76c8ee049e61e7d092f
+          path: blackhawk
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
-        run: ln -sfn "$GITHUB_WORKSPACE/android-wallet" "$(dirname "$GITHUB_WORKSPACE")/nighthawk-android-wallet"
+        run: ln -sfn "$GITHUB_WORKSPACE/blackhawk" "$(dirname "$GITHUB_WORKSPACE")/blackhawk"
       - name: Install Linux Tauri and audio dependencies
         run: |
           sudo apt-get update
@@ -89,16 +89,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout Android wallet for darkfi-mobile-ffi
+      - name: Checkout Blackhawk UniFFI core
         uses: actions/checkout@v4
         with:
-          repository: nighthawk-apps/nighthawk-android-wallet
-          # The next desktop release updates this SHA to the Android commit it was built against.
-          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
-          path: android-wallet
+          repository: nighthawk-apps/blackhawk
+          # Pinned Blackhawk commit this desktop release builds against.
+          ref: cd8971c8c770f89a5978d76c8ee049e61e7d092f
+          path: blackhawk
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
-        run: ln -sfn "$GITHUB_WORKSPACE/android-wallet" "$(dirname "$GITHUB_WORKSPACE")/nighthawk-android-wallet"
+        run: ln -sfn "$GITHUB_WORKSPACE/blackhawk" "$(dirname "$GITHUB_WORKSPACE")/blackhawk"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -159,20 +159,20 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout Android wallet for darkfi-mobile-ffi
+      - name: Checkout Blackhawk UniFFI core
         uses: actions/checkout@v4
         with:
-          repository: nighthawk-apps/nighthawk-android-wallet
-          # The next desktop release updates this SHA to the Android commit it was built against.
-          ref: 1f8ae0b464039006d0c732615417e4f579f7889b
-          path: android-wallet
+          repository: nighthawk-apps/blackhawk
+          # Pinned Blackhawk commit this desktop release builds against.
+          ref: cd8971c8c770f89a5978d76c8ee049e61e7d092f
+          path: blackhawk
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
         shell: pwsh
         run: |
           $parent = Split-Path -Parent $env:GITHUB_WORKSPACE
-          $link = Join-Path $parent "nighthawk-android-wallet"
-          $target = Join-Path $env:GITHUB_WORKSPACE "android-wallet"
+          $link = Join-Path $parent "blackhawk"
+          $target = Join-Path $env:GITHUB_WORKSPACE "blackhawk"
           if (Test-Path $link) { Remove-Item $link -Force -Recurse }
           New-Item -ItemType Junction -Path $link -Target $target | Out-Null
       - uses: dtolnay/rust-toolchain@stable

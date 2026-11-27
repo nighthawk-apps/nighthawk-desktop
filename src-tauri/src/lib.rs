@@ -14,7 +14,11 @@ use tauri::Manager;
 pub fn run() {
     // A normal launch stays quiet. Stderr from a desktop app is collected by
     // the OS console. Set RUST_LOG to opt in while debugging.
-    let default_filter = if cfg!(debug_assertions) { "info" } else { "off" };
+    let default_filter = if cfg!(debug_assertions) {
+        "info"
+    } else {
+        "off"
+    };
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -22,8 +26,9 @@ pub fn run() {
         )
         .try_init();
 
-    let prefs = commands::initial_prefs();
     let _ = wallets::bootstrap_from_prefs();
+    let prefs = commands::initial_prefs();
+    blackhawk::transport_manager::set_direct_disabled(prefs.disable_direct_connection);
     #[cfg(debug_assertions)]
     commands::maybe_e2e_restore_from_file();
     let state = AppState::new(prefs);
@@ -98,6 +103,8 @@ pub fn run() {
             commands::set_network,
             commands::backup_mnemonic,
             commands::wipe_wallet,
+            commands::open_external_url,
+            commands::clear_os_clipboard,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Nighthawk")
@@ -110,6 +117,7 @@ pub fn run() {
                     let _ = m.child.kill();
                     let _ = m.child.wait();
                 }
+                blackhawk::transport_manager::set_allow_unauth_socks_for_miner(false);
             }
         });
 }

@@ -3,16 +3,17 @@
 export const DRK_DECIMALS = 8;
 const MAX_DRK_HUMAN = 21_000_000n;
 
+const MAX_DRK_ATOMIC = MAX_DRK_HUMAN * 10n ** BigInt(DRK_DECIMALS);
+
 export function parseDrkAtomic(amount: string): bigint | null {
   const trimmed = amount.trim();
   if (!trimmed || !/^\d+(\.\d+)?$/.test(trimmed)) return null;
   const [wholeRaw, fracRaw = ""] = trimmed.split(".");
   if (fracRaw.length > DRK_DECIMALS) return null;
   const whole = BigInt(wholeRaw || "0");
-  if (whole > MAX_DRK_HUMAN) return null;
   const frac = (fracRaw + "0".repeat(DRK_DECIMALS)).slice(0, DRK_DECIMALS);
   const atomic = whole * 10n ** BigInt(DRK_DECIMALS) + BigInt(frac || "0");
-  if (atomic <= 0n) return null;
+  if (atomic <= 0n || atomic > MAX_DRK_ATOMIC) return null;
   return atomic;
 }
 
@@ -50,6 +51,8 @@ export type SendBalance = { ok: true } | { ok: false; code: SendBalanceCode };
 
 /** Same rule as Android: an unknown token id is not DRK, and a custom token
  *  still needs a separate DRK balance for the fee. */
+export const NATIVE_DRK_TOKEN_ID = "241vANigf1Cy3ytjM1KHXiVECxgxdK4yApddL8KcLssb";
+
 export function evaluateSendBalance(input: {
   amountAtomic: bigint;
   tokenId: string;
@@ -59,11 +62,10 @@ export function evaluateSendBalance(input: {
   feeAtomic: bigint;
 }): SendBalance {
   const tokenId = input.tokenId.trim();
-  const label = (input.tokenLabel ?? "").trim();
   const native =
     !tokenId ||
     tokenId.toUpperCase() === "DRK" ||
-    label.toUpperCase() === "DRK";
+    tokenId === NATIVE_DRK_TOKEN_ID;
   if (native) {
     const required = input.amountAtomic + input.feeAtomic;
     if (input.drkAtomic < required) {

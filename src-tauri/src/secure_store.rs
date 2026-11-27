@@ -306,12 +306,17 @@ fn read_meta() -> Result<Option<VaultMeta>> {
         return Ok(None);
     };
     let version = raw.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    // Accept current version and legacy v2 (PBKDF2-only).
-    if version != META_VERSION && version != LEGACY_META_VERSION {
-        // PIN-era (v1) or unknown — drop so the user re-creates.
+    if version == 1 {
+        // One-time cleanup of obsolete PIN-era v1 vaults.
         let _ = fs::remove_file(meta_path());
         let _ = fs::remove_file(data_path());
         return Ok(None);
+    }
+    // Accept current version and legacy v2 (PBKDF2-only). Never delete unknown/future vaults.
+    if version != META_VERSION && version != LEGACY_META_VERSION {
+        return Err(anyhow!(
+            "Unsupported or corrupted vault metadata (version {version})"
+        ));
     }
     Ok(Some(
         serde_json::from_value(raw).context("parse vault meta")?,

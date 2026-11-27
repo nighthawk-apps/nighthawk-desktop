@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "e.g. 1.5",
   "chat.modal_memo_placeholder": "Optional note",
   "chat.modal_post_request": "Post Request",
-  "chat.wallet_address_not_ready": "Wallet address is not ready yet."
+  "chat.wallet_address_not_ready": "Wallet address is not ready yet.",
+  "settings.disable_direct": "Disable Direct Connection",
+  "settings.disable_direct_hint": "Permanently block clearnet Direct fallback (require Tor or Nym for all network and chat traffic).",
+  "settings.confirm_disable_direct": "Disable Direct Connection? Nighthawk will block all clearnet fallback until you re-enable it here."
 }

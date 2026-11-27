@@ -7,13 +7,13 @@ Thank you for your interest in contributing!
 1. Install Rust via `rustup`.
 2. Install Node.js (v18+) and `pnpm`.
 3. Install Tauri CLI dependencies (macOS: Xcode Command Line Tools).
-4. Place sibling checkouts as described in `README.md` (`darkfi-mobile-ffi` next to this repo).
+4. Place sibling checkouts as described in `README.md` (`blackhawk` next to this repo).
 
 ## Project Structure
 
 - `src/web/`: Lit components and CSS theme variables.
 - `src-tauri/src/`: Rust backend and gRPC proxy logic.
-- Protobuf types come from `nighthawk-android-wallet/rust/darkfi-mobile-ffi`. This repo does not keep a proto copy.
+- Protobuf types come from `blackhawk/crates/blackhawk`. This repo does not keep a proto copy.
 
 ## Pull Requests
 

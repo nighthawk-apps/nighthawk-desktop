@@ -169,6 +169,9 @@ export class SettingsScreen extends LitElement {
     if (this.prefs && this.prefs.strictOmrOnly === undefined) {
       this.prefs.strictOmrOnly = false;
     }
+    if (this.prefs && this.prefs.disableDirectConnection === undefined) {
+      this.prefs.disableDirectConnection = false;
+    }
     this.artiRunning = await api.artiStatus();
     this.wallets = await api.walletsList();
     try {
@@ -275,6 +278,9 @@ export class SettingsScreen extends LitElement {
     this.error = "";
     try {
       this.clearBackupDisplay();
+      localStorage.removeItem("nighthawk-fud-queue");
+      await api.clearOsClipboard().catch(() => undefined);
+      await navigator.clipboard?.writeText("").catch(() => undefined);
       await api.wipeWallet();
       location.reload();
     } catch (e: unknown) {
@@ -458,9 +464,13 @@ export class SettingsScreen extends LitElement {
         />
         <label>${t("settings.privacy_transport")}</label>
         <select
-          .value=${p.useNym ? "nym" : p.useTor ? "tor" : "direct"}
+          .value=${p.useNym ? "nym" : p.useTor ? "tor" : p.disableDirectConnection ? "tor" : "direct"}
           @change=${(e: Event) => {
             const mode = (e.target as HTMLSelectElement).value;
+            if (mode === "direct" && p.disableDirectConnection) {
+              (e.target as HTMLSelectElement).value = p.useNym ? "nym" : "tor";
+              return;
+            }
             p.useNym = mode === "nym";
             p.useTor = mode === "tor";
             this.requestUpdate();
@@ -468,7 +478,7 @@ export class SettingsScreen extends LitElement {
         >
           <option value="tor">${t("settings.transport_tor")}</option>
           <option value="nym">${t("settings.transport_nym")}</option>
-          <option value="direct">${t("settings.transport_direct")}</option>
+          <option value="direct" ?disabled=${Boolean(p.disableDirectConnection)}>${t("settings.transport_direct")}</option>
         </select>
         <label>${t("settings.tor_socks_port")}</label>
         <input
@@ -500,6 +510,28 @@ export class SettingsScreen extends LitElement {
           ${t("settings.experimental_omr")}
         </label>
         <p class="msg">${t("settings.experimental_omr_hint")}</p>
+        <label>
+          <input
+            type="checkbox"
+            .checked=${Boolean(p.disableDirectConnection)}
+            @change=${(e: Event) => {
+              const el = e.target as HTMLInputElement;
+              if (el.checked && !p.disableDirectConnection) {
+                if (!window.confirm(t("settings.confirm_disable_direct"))) {
+                  el.checked = false;
+                  return;
+                }
+                if (!p.useTor && !p.useNym) {
+                  p.useTor = true;
+                }
+              }
+              p.disableDirectConnection = el.checked;
+              this.requestUpdate();
+            }}
+          />
+          ${t("settings.disable_direct")}
+        </label>
+        <p class="msg">${t("settings.disable_direct_hint")}</p>
         <div class="row">
           <button @click=${this.save}>${t("common.save")}</button>
           <button class="secondary" @click=${this.toggleArti}>
@@ -625,7 +657,7 @@ export class SettingsScreen extends LitElement {
       </div>
       <div class="card">
         <h3>${t("nav.about")}</h3>
-        <p>${t("settings.about_line", { version: this.appVersion || "3.1.21" })}</p>
+        <p>${t("settings.about_line", { version: this.appVersion || "3.2.1" })}</p>
       </div>
       ${this.message ? html`<p class="msg">${this.message}</p>` : null}
       ${this.error ? html`<p class="err">${this.error}</p>` : null}

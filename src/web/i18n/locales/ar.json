@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "مثل 1.5",
   "chat.modal_memo_placeholder": "ملاحظة اختيارية",
   "chat.modal_post_request": "نشر الطلب",
-  "chat.wallet_address_not_ready": "عنوان المحفظة غير جاهز بعد."
+  "chat.wallet_address_not_ready": "عنوان المحفظة غير جاهز بعد.",
+  "settings.disable_direct": "تعطيل الاتصال المباشر",
+  "settings.disable_direct_hint": "حظر الرجوع إلى الشبكة المكشوفة بشكل دائم (يتطلب Tor أو Nym لكل حركة المحفظة والدردشة).",
+  "settings.confirm_disable_direct": "هل تريد تعطيل الاتصال المباشر؟ سيحظر Nighthawk أي اتصال مباشر حتى تعيد تفعيله هنا."
 }

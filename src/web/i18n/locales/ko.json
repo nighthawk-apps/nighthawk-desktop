@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "예: 1.5",
   "chat.modal_memo_placeholder": "메모(선택)",
   "chat.modal_post_request": "요청 게시",
-  "chat.wallet_address_not_ready": "지갑 주소가 아직 준비되지 않았습니다."
+  "chat.wallet_address_not_ready": "지갑 주소가 아직 준비되지 않았습니다.",
+  "settings.disable_direct": "직접 연결 비활성화",
+  "settings.disable_direct_hint": "일반 인터넷 직접 연결 폴백을 영구적으로 차단합니다(모든 트래픽에 Tor 또는 Nym 필요).",
+  "settings.confirm_disable_direct": "직접 연결을 비활성화하시겠습니까? 여기에서 다시 활성화할 때까지 직접 연결이 차단됩니다."
 }

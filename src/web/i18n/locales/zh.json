@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "例如 1.5",
   "chat.modal_memo_placeholder": "可选备注",
   "chat.modal_post_request": "发布请求",
-  "chat.wallet_address_not_ready": "钱包地址尚未就绪。"
+  "chat.wallet_address_not_ready": "钱包地址尚未就绪。",
+  "settings.disable_direct": "禁用直连",
+  "settings.disable_direct_hint": "永久阻止明网直连回退（所有钱包和聊天流量均强制通过 Tor 或 Nym）。",
+  "settings.confirm_disable_direct": "确定禁用直连？Nighthawk 将阻止所有直连回退，直到你在此重新开启。"
 }

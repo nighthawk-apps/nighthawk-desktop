@@ -1,6 +1,5 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, formatInvokeError, type ChatMessage, type DmKeypair } from "../lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { prepareInlineChatRequest } from "../lib/chat-request";
@@ -9,6 +8,8 @@ import {
   bumpDmUnread,
   clearDmUnread,
   clearLegacyDmStorage,
+  formatNighthawkContactCard,
+  parseNighthawkContactInput,
   readLegacyDmContacts,
   type DmContact,
 } from "../lib/dm-contacts";
@@ -793,14 +794,12 @@ export class ChatScreen extends LitElement {
     return lexChat(text).map((span) => {
       switch (span.kind) {
         case "url":
-          return html`<a
+          return html`<button
+            type="button"
             class="chat-link"
-            href=${span.value}
-            target="_blank"
-            rel="noopener noreferrer"
+            style="background:none;border:none;padding:0;font:inherit;cursor:pointer;"
             @click=${(e: Event) => this.onChatLink(e, span.value)}
-            >${span.value}</a
-          >`;
+          >${span.value}</button>`;
         case "fud":
           return html`<span class="chat-fud">${span.value}</span>`;
         default:
@@ -815,7 +814,7 @@ export class ChatScreen extends LitElement {
     const open = window.confirm(t("chat.confirm_clearnet_link"));
     if (open) {
       try {
-        await openUrl(url);
+        await api.openExternalUrl(url);
       } catch (err: unknown) {
         this.error = formatInvokeError(err);
       }
@@ -988,15 +987,18 @@ export class ChatScreen extends LitElement {
   }
 
   private async saveContact() {
-    const peerPk = this.peerPublic.trim();
+    const parsed = parseNighthawkContactInput(this.peerPublic);
+    const peerPk = parsed.publicB58.trim();
     if (!peerPk) {
       this.error = t("chat.enter_peer_key");
       return;
     }
+    const label = this.dmContactLabel.trim() || parsed.label || "";
     try {
       this.dmContacts = await api.dmContactsUpsert(
-        this.dmContactLabel,
+        label,
         peerPk,
+        parsed.ratchetCapable,
       );
       this.dmContactLabel = "";
       this.error = "";
@@ -1338,6 +1340,7 @@ export class ChatScreen extends LitElement {
               ${this.dmKeys
                 ? html`<p>
                     ${t("chat.your_public_key")}<br /><code>${this.dmKeys.publicB58}</code>
+                    <br /><code style="font-size:0.85em">${formatNighthawkContactCard(this.dmKeys.publicB58, this.nick)}</code>
                   </p>`
                 : null}
               <input

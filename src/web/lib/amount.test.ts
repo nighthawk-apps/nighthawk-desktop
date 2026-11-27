@@ -34,8 +34,25 @@ if (formatDrkAtomic(18_000_000) !== "0.18") {
   throw new Error(`formatDrkAtomic(18000000) = ${formatDrkAtomic(18_000_000)}`);
 }
 
-if (isValidDrkAmount("") || isValidDrkAmount("0") || isValidDrkAmount("1.123456789")) {
+if (
+  isValidDrkAmount("") ||
+  isValidDrkAmount("0") ||
+  isValidDrkAmount("1.123456789") ||
+  isValidDrkAmount("21000000.00000001")
+) {
   throw new Error("invalid amounts were accepted");
+}
+
+const spoofedLabel = evaluateSendBalance({
+  amountAtomic: 100n,
+  tokenId: "tok_custom_not_drk",
+  tokenLabel: "DRK",
+  tokenAtomic: 10n,
+  drkAtomic: 50_000_000n,
+  feeAtomic: 5_000_000n,
+});
+if (spoofedLabel.ok || spoofedLabel.code !== "insufficient_token") {
+  throw new Error("custom token labeled DRK must still validate custom token balance");
 }
 
 const customOk = evaluateSendBalance({

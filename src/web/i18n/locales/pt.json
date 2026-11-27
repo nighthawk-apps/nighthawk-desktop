@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "ex.: 1.5",
   "chat.modal_memo_placeholder": "Nota opcional",
   "chat.modal_post_request": "Publicar solicitação",
-  "chat.wallet_address_not_ready": "O endereço da carteira ainda não está pronto."
+  "chat.wallet_address_not_ready": "O endereço da carteira ainda não está pronto.",
+  "settings.disable_direct": "Desativar conexão direta",
+  "settings.disable_direct_hint": "Bloqueia permanentemente o fallback direto em rede clara (exige Tor ou Nym em todo o tráfego).",
+  "settings.confirm_disable_direct": "Desativar conexão direta? O Nighthawk bloqueará o fallback direto até você reativar aqui."
 }

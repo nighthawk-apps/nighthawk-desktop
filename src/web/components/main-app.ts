@@ -225,6 +225,12 @@ export class MainApp extends LitElement {
     if (this.phase === "onboarding") {
       return html`<onboarding-flow
         @wallet-ready=${async () => {
+          try {
+            const prefs = await api.getPrefs();
+            this.network = prefs.network;
+          } catch {
+            /* keep existing network label if prefs read fails */
+          }
           await this.ensureScreens();
           this.phase = "ready";
           this.startSyncPolling();

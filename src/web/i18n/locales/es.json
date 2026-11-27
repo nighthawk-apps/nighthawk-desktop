@@ -339,5 +339,8 @@
   "chat.modal_amount_placeholder": "p. ej. 1.5",
   "chat.modal_memo_placeholder": "Nota opcional",
   "chat.modal_post_request": "Publicar solicitud",
-  "chat.wallet_address_not_ready": "La dirección de la cartera todavía no está lista."
+  "chat.wallet_address_not_ready": "La dirección de la cartera todavía no está lista.",
+  "settings.disable_direct": "Desactivar conexión directa",
+  "settings.disable_direct_hint": "Bloquea permanentemente el respaldo directo en claro (requiere Tor o Nym para todo el tráfico).",
+  "settings.confirm_disable_direct": "¿Desactivar conexión directa? Nighthawk bloqueará la conexión directa hasta que vuelvas a activarla aquí."
 }

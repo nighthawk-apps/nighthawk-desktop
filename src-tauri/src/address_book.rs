@@ -10,11 +10,14 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
 };
 use anyhow::{Context, Result, anyhow};
+use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
+
+static ADDR_BOOK_LOCK: Mutex<()> = Mutex::new(());
 
 const ADDR_BOOK_MAGIC: &[u8; 12] = b"DRK_ADDR_DB1";
 const KEYRING_SERVICE: &str = "com.nighthawkapps.desktop.addressbook";
@@ -231,6 +234,7 @@ fn save(book: &AddressBookFile) -> Result<()> {
 }
 
 pub fn list_entries() -> Result<Vec<AddressBookEntry>> {
+    let _guard = ADDR_BOOK_LOCK.lock();
     Ok(load()?.entries)
 }
 
@@ -255,6 +259,7 @@ pub fn apply_upsert(entries: &mut Vec<AddressBookEntry>, entry: AddressBookEntry
 }
 
 pub fn upsert_entry(entry: AddressBookEntry) -> Result<Vec<AddressBookEntry>> {
+    let _guard = ADDR_BOOK_LOCK.lock();
     let mut book = load()?;
     apply_upsert(&mut book.entries, entry);
     save(&book)?;
@@ -262,6 +267,7 @@ pub fn upsert_entry(entry: AddressBookEntry) -> Result<Vec<AddressBookEntry>> {
 }
 
 pub fn remove_entry(id: &str) -> Result<Vec<AddressBookEntry>> {
+    let _guard = ADDR_BOOK_LOCK.lock();
     let mut book = load()?;
     book.entries.retain(|e| e.id != id);
     save(&book)?;

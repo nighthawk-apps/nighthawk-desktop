@@ -4,6 +4,7 @@ import {
   bumpDmUnread,
   clearDmUnread,
   clearLegacyDmStorage,
+  parseNighthawkContactInput,
   readLegacyDmContacts,
   upsertDmContact,
 } from "./dm-contacts.ts";
@@ -70,4 +71,18 @@ if (!alice || alice.unread !== 1) {
 contacts = clearDmUnread(contacts, "AbcDef");
 if (contacts.find((c) => c.publicB58 === "AbcDef")?.unread !== 0) {
   throw new Error("clearDmUnread must reset unread count to 0");
+}
+
+const iosCard = parseNighthawkContactInput(
+  "nighthawk://contact?nick=Alice&dm=PkAliceIos111&dr=1",
+);
+if (iosCard.publicB58 !== "PkAliceIos111" || iosCard.label !== "Alice" || !iosCard.ratchetCapable) {
+  throw new Error(`failed to parse iOS contact card: ${JSON.stringify(iosCard)}`);
+}
+
+const androidCard = parseNighthawkContactInput(
+  "nighthawk://contact?k=PkBobAnd111&name=Bob&dr=1",
+);
+if (androidCard.publicB58 !== "PkBobAnd111" || androidCard.label !== "Bob" || !androidCard.ratchetCapable) {
+  throw new Error(`failed to parse Android contact card: ${JSON.stringify(androidCard)}`);
 }
