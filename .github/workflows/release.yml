@@ -46,6 +46,13 @@ jobs:
             rpm \
             squashfs-tools
       - uses: dtolnay/rust-toolchain@stable
+      - name: Compile DarkFi event_graph .zk.bin proofs
+        run: |
+          cd blackhawk/third_party/darkfi
+          cargo build --release -p zkas
+          for zk in src/event_graph/proof/*.zk; do
+            ./target/release/zkas "$zk" -o "${zk}.bin"
+          done
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -76,6 +83,10 @@ jobs:
           find src-tauri/target/release/bundle/deb -maxdepth 2 -name "*.deb" -exec cp {} "$OUT/" \;
           find src-tauri/target/release/bundle/rpm -maxdepth 2 -name "*.rpm" -exec cp {} "$OUT/" \;
           find src-tauri/target/release/bundle/appimage -maxdepth 2 -name "*.AppImage" -exec cp {} "$OUT/" \;
+          test -n "$(find "$OUT" -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$(find "$OUT" -maxdepth 1 -name '*.rpm' -print -quit)"
+          test -n "$(find "$OUT" -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -f "$OUT/Nighthawk_${VERSION}_linux_x86_64.tar.gz"
           ls -lh "$OUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -102,6 +113,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Compile DarkFi event_graph .zk.bin proofs
+        run: |
+          cd blackhawk/third_party/darkfi
+          cargo build --release -p zkas
+          for zk in src/event_graph/proof/*.zk; do
+            ./target/release/zkas "$zk" -o "${zk}.bin"
+          done
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -142,10 +160,14 @@ jobs:
         run: pnpm tauri build --target universal-apple-darwin --bundles dmg
       - name: Collect macOS artifacts
         run: |
+          VERSION="$(node -p "require('./package.json').version")"
           OUT="$RUNNER_TEMP/release-macos"
           mkdir -p "$OUT"
-          find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 2 -name "*.dmg" -exec cp {} "$OUT/" \;
-          find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 2 -name "*.dmg" -exec cp {} "$OUT/" \;
+          AARCH64_DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 2 -name '*.dmg' | head -n 1)"
+          UNIVERSAL_DMG="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 2 -name '*.dmg' | head -n 1)"
+          test -n "$AARCH64_DMG" && test -n "$UNIVERSAL_DMG"
+          cp "$AARCH64_DMG" "$OUT/Nighthawk_${VERSION}_aarch64.dmg"
+          cp "$UNIVERSAL_DMG" "$OUT/Nighthawk_${VERSION}_universal.dmg"
           ls -lh "$OUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -178,6 +200,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - name: Compile DarkFi event_graph .zk.bin proofs
+        shell: pwsh
+        run: |
+          Push-Location blackhawk/third_party/darkfi
+          try {
+            cargo build --release -p zkas
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Get-ChildItem -Path "src/event_graph/proof" -Filter "*.zk" | ForEach-Object {
+              & ".\target\release\zkas.exe" $_.FullName -o ($_.FullName + ".bin")
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          } finally {
+            Pop-Location
+          }
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -186,10 +222,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build Windows NSIS (.exe) and MSI (.msi) installers
+      - name: Build Windows NSIS (.exe) installer
         env:
           CI: "true"
-        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
       - name: Package portable zip and collect Windows artifacts
         shell: pwsh
         run: |
@@ -202,10 +238,9 @@ jobs:
           Copy-Item "src-tauri/binaries/xmrig-x86_64-pc-windows-msvc.exe" (Join-Path $stage "xmrig.exe")
           Compress-Archive -Path "$stage\*" -DestinationPath (Join-Path $out "Nighthawk_${version}_windows_x64_portable.zip") -Force
 
-          Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*.exe" -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $out
-          Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $out
+          $nsisExe = Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
+          if (-not $nsisExe) { throw "Missing Windows NSIS .exe bundle" }
+          Copy-Item $nsisExe.FullName (Join-Path $out "Nighthawk_${version}_x64.exe")
           Get-ChildItem $out
       - uses: actions/upload-artifact@v4
         with:
@@ -227,7 +262,9 @@ jobs:
       - name: Generate SHA256SUMS.txt
         run: |
           cd dist-artifacts
-          sha256sum * > SHA256SUMS.txt
+          rm -f SHA256SUMS.txt
+          LC_ALL=C sha256sum * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Upload checksummed release bundle artifact
         uses: actions/upload-artifact@v4

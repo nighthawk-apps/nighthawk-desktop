@@ -4,7 +4,7 @@
   <img src="docs/images/desktop-testnet.png" alt="Nighthawk Desktop wallet synced on DarkFi testnet" width="780">
 </p>
 
-**3.2.1** (crate / Tauri / `package.json`; same release as Android 3.2.01). Switches FFI backend to standalone MIT [`blackhawk`](https://github.com/nighthawk-apps/blackhawk) (`0.3.0`), adds optional DarkIRC Double Ratchet (`NHDR1:` / `&dr=1`), persistent Disable Direct Connections setting, and a lightweight `FlowSyncWave` sync indicator. DarkFi pin `b87318e80` via shared `blackhawk`. Aligns with Android 3.2.01, Moonshine 3.2.1, lightwalletd 0.3.15, and iOS 3.01.24 (pending 3.2.01). Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
+**3.2.1** (crate / Tauri / `package.json`; same release as Android 3.2.01). Switches FFI backend to standalone MIT [`blackhawk`](https://github.com/nighthawk-apps/blackhawk) (`0.3.1`), adds optional DarkIRC Double Ratchet (`NHDR1:` / `&dr=1`), persistent Disable Direct Connections setting, and a lightweight `FlowSyncWave` sync indicator. DarkFi pin `b87318e80` via shared `blackhawk`. Aligns with Android 3.2.01, Moonshine 3.2.1, lightwalletd 0.3.15, and iOS 3.01.24 (pending 3.2.01). Cyberpunk is the default theme on a light or dark system, with the Void wallpaper anchored at the top left. Body text uses DejaVu Sans Mono. Send waits until the wallet is spend-ready, the sync label is green only while lightwalletd is live, and Paper uses the same graphite and grey accent scale as Android and iOS Light. Type is the Android scale (Source Sans 3, Outfit, IBM Plex Mono). Cross-platform DarkFi wallet for desktop ([`nighthawk-apps/nighthawk-desktop`](https://github.com/nighthawk-apps/nighthawk-desktop)):
 
 ## Executive Summary: Why Nighthawk Leads in Privacy
 
@@ -76,7 +76,13 @@ pnpm tauri dev
 
 ## Build
 
-`src-tauri/Cargo.toml` requires a sibling **`blackhawk`** and **`darkfi-nighthawk-testnet`**.
+`src-tauri/Cargo.toml` requires a sibling **`blackhawk`** (`git clone --recursive`) and **`darkfi-nighthawk-testnet`**.
+
+On a fresh `blackhawk` checkout, compile the gitignored DarkFi event-graph `.zk.bin` proofs once before building or testing:
+
+```bash
+(cd ../blackhawk/third_party/darkfi && cargo build --release -p zkas && for zk in src/event_graph/proof/*.zk; do ./target/release/zkas "$zk" -o "${zk}.bin"; done)
+```
 
 Cargo git deps inside that tree are not fetched from `git.dark.fi` (HTTP 504):
 

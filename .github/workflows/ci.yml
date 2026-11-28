@@ -39,6 +39,13 @@ jobs:
           submodules: recursive
       - name: Link the FFI crate where Cargo.toml expects it
         run: ln -sfn "$GITHUB_WORKSPACE/blackhawk" "$(dirname "$GITHUB_WORKSPACE")/blackhawk"
+      - name: Compile DarkFi event_graph .zk.bin proofs
+        run: |
+          cd blackhawk/third_party/darkfi
+          cargo build --release -p zkas
+          for zk in src/event_graph/proof/*.zk; do
+            ./target/release/zkas "$zk" -o "${zk}.bin"
+          done
       - run: bash -n scripts/fetch-xmrig.sh
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --no-deps -- -D warnings
